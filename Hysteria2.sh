@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.3.3" # Incremented for SNI parsing fix
+SCRIPT_VERSION="1.3.4" # Incremented for SNI parsing fix
 SCRIPT_DATE="2025-05-08" 
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -65,61 +65,66 @@ _get_link_params_from_config() {
 
     _log_info "正从 $HYSTERIA_CONFIG_FILE 解析配置以生成链接..."
 
-    # Use grep and sed/awk for safer parsing
     HY_PORT=$(grep -E '^\s*listen:\s*:([0-9]+)' "$HYSTERIA_CONFIG_FILE" | sed -E 's/^\s*listen:\s*://' || echo "")
     HY_PASSWORD=$(grep '^\s*auth:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*password: \([^ ,}]*\).*/\1/p' || echo "")
 
     if grep -q '^\s*acme:' "$HYSTERIA_CONFIG_FILE"; then
-        # ACME Mode
         _log_info "检测到 ACME 配置。"
-        DOMAIN_FROM_CONFIG=$(grep '^\s*acme:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*domains: \[- \([^]]*\) \].*/\1/p' | sed 's/["'\'']//g' || echo "")
-        if [ -z "$DOMAIN_FROM_CONFIG" ]; then _log_error "无法从配置解析ACME域名。"; return 1; fi
+        
+        # --- 添加调试输出 ---
+        _log_info "调试：显示 config.yaml 内容用于解析："
+        echo "--- Config Content Start ---" >&2
+        cat "$HYSTERIA_CONFIG_FILE" >&2 || echo "无法读取配置文件内容" >&2
+        echo "--- Config Content End ---" >&2
+        # --- 结束调试输出 ---
+
+        # --- 更新后的 AWK 解析逻辑 ---
+        DOMAIN_FROM_CONFIG=$(awk '
+            BEGIN { in_acme=0; in_domains=0 }
+            /^\s*acme:/ { in_acme=1; next }
+            in_acme && /^\s*domains:/ { in_domains=1; next }
+            # 匹配以可选空格开头，然后是'-'，然后是至少一个空格，然后捕获剩余部分
+            in_acme && in_domains && /^\s*-\s+/ {
+                # 从第一个非空白字符开始获取域名字段
+                match($0, /-\s+(.*)/); 
+                domain = substr($0, RSTART + RLENGTH - length(substr($0, RSTART + RLENGTH)));
+                # 移除可能的注释和行尾空格
+                sub(/#.*/, "", domain); 
+                sub(/[ \t]+$/, "", domain);
+                # 移除可能的引号
+                gsub(/^["'\'']|["'\'']$/, "", domain);
+                print domain; 
+                exit; # 找到第一个就退出
+            }
+            # 如果离开了acme块或domains列表，重置标志位
+            in_acme && !/^\s+/ { in_acme=0; in_domains=0 } 
+            in_domains && !/^\s*-\s+/ && !/^\s*$/ { in_domains=0 } 
+            ' "$HYSTERIA_CONFIG_FILE")
+        # --- 结束 AWK 解析逻辑 ---
+
+        # --- 添加调试输出 ---
+        echo "DEBUG: AWK 解析后的域名 = [$DOMAIN_FROM_CONFIG]" >&2
+        # --- 结束调试输出 ---
+            
+        if [ -z "$DOMAIN_FROM_CONFIG" ]; then 
+            _log_error "无法从配置解析ACME域名。" 
+            return 1
+        fi
         _log_info "ACME 域名: $DOMAIN_FROM_CONFIG"
         HY_LINK_SNI="$DOMAIN_FROM_CONFIG"; HY_LINK_ADDRESS="$DOMAIN_FROM_CONFIG"; HY_LINK_INSECURE="0"; HY_SNI_VALUE="$DOMAIN_FROM_CONFIG"
     elif grep -q '^\s*tls:' "$HYSTERIA_CONFIG_FILE"; then
-        # Custom TLS Mode
+        # ... (自定义 TLS 的解析逻辑保持不变) ...
          _log_info "检测到自定义 TLS 配置。"
         CERT_PATH_FROM_CONFIG=$(grep '^\s*tls:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*cert: \([^, }]*\).*/\1/p' || echo "")
-        # KEY_PATH_FROM_CONFIG=$(grep '^\s*tls:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*key: \([^ }]*\).*/\1/p' || echo "") # Key path not needed for link info
-
         if [ -z "$CERT_PATH_FROM_CONFIG" ]; then _log_error "无法从配置解析证书路径。"; return 1; fi
-        # Resolve relative paths based on config dir if necessary
         if [[ "$CERT_PATH_FROM_CONFIG" != /* ]]; then CERT_PATH_FROM_CONFIG="${HYSTERIA_CONFIG_DIR}/${CERT_PATH_FROM_CONFIG}"; fi
-        # Normalize path with realpath if available
         if command -v realpath &>/dev/null; then CERT_PATH_FROM_CONFIG=$(realpath -m "$CERT_PATH_FROM_CONFIG" 2>/dev/null || echo "$CERT_PATH_FROM_CONFIG"); fi
-
         if [ ! -f "$CERT_PATH_FROM_CONFIG" ]; then _log_error "配置文件中的证书路径 '$CERT_PATH_FROM_CONFIG' 无效或文件不存在。"; return 1; fi
-        _log_info "证书路径: $CERT_PATH_FROM_CONFIG"
-        _log_info "尝试从证书提取 SNI..."
-
-        # --- Improved SNI Extraction Start ---
-        # Method 1: Use RFC2253 standard format (often most reliable)
-        HY_SNI_VALUE=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | sed -n 's/.*CN=\([^,]*\).*/\1/p')
-
-        if [ -z "$HY_SNI_VALUE" ]; then
-             # Method 2: Fallback to previous sed method (handles "CN = ..." etc.)
-             _log_info "方法1(RFC2253)提取CN失败, 尝试方法2..."
-             HY_SNI_VALUE=$(openssl x509 -noout -subject -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | sed -n 's/.*CN ?= ?\([^,]*\).*/\1/p' | head -n 1 | sed 's/^[ \t]*//;s/[ \t]*$//') # Trim whitespace
-        fi
-
-        if [ -z "$HY_SNI_VALUE" ]; then
-            # Method 3: Fallback to SAN extraction
-            _log_info "方法2提取CN失败, 尝试从SAN提取..."
-            HY_SNI_VALUE=$(openssl x509 -noout -text -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | grep 'DNS:' | head -n 1 | sed 's/.*DNS://' | tr -d ' ' | cut -d, -f1)
-        fi
-
-        if [ -z "$HY_SNI_VALUE" ]; then
-            _log_warning "无法从证书'$CERT_PATH_FROM_CONFIG'提取有效SNI(CN或SAN), 使用'sni_unknown'代替。"
-            HY_SNI_VALUE="sni_unknown" # Use placeholder if failed
-        else
-             _log_info "提取到 SNI: $HY_SNI_VALUE"
-        fi
-        # --- Improved SNI Extraction End ---
-
-        HY_LINK_SNI="$HY_SNI_VALUE"
-        HY_LINK_ADDRESS=$(_get_server_address) # Re-fetch current IP
-        if [ $? -ne 0 ] || [ -z "$HY_LINK_ADDRESS" ]; then _log_error "获取服务器公网地址失败。"; return 1; fi
-        HY_LINK_INSECURE="1"
+        _log_info "证书路径: $CERT_PATH_FROM_CONFIG"; _log_info "尝试从证书提取 SNI..."
+        HY_SNI_VALUE=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | sed -n 's/.*CN=\([^,]*\).*/\1/p'); if [ -z "$HY_SNI_VALUE" ]; then _log_info "RFC2253提取CN失败,尝试旧版sed..."; HY_SNI_VALUE=$(openssl x509 -noout -subject -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | sed -n 's/.*CN ?= ?\([^,]*\).*/\1/p' | head -n 1 | sed 's/^[ \t]*//;s/[ \t]*$//'); fi
+        if [ -z "$HY_SNI_VALUE" ]; then _log_info "CN提取失败,尝试SAN..."; HY_SNI_VALUE=$(openssl x509 -noout -text -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | grep 'DNS:' | head -n 1 | sed 's/.*DNS://' | tr -d ' ' | cut -d, -f1); fi
+        if [ -z "$HY_SNI_VALUE" ]; then _log_warning "无法提取有效SNI(CN或SAN), 使用'sni_unknown'代替。"; HY_SNI_VALUE="sni_unknown"; else _log_info "提取到 SNI: $HY_SNI_VALUE"; fi
+        HY_LINK_SNI="$HY_SNI_VALUE"; HY_LINK_ADDRESS=$(_get_server_address); if [ $? -ne 0 ] || [ -z "$HY_LINK_ADDRESS" ]; then _log_error "获取公网地址失败。"; return 1; fi; HY_LINK_INSECURE="1"
     else _log_error "无法确定TLS模式。"; return 1; fi
 
     if [ -z "$HY_PORT" ] || [ -z "$HY_PASSWORD" ] || [ -z "$HY_LINK_ADDRESS" ] || [ -z "$HY_LINK_SNI" ] || [ -z "$HY_LINK_INSECURE" ] || [ -z "$HY_SNI_VALUE" ]; then _log_error "未能解析生成链接所需的所有参数。"; return 1; fi
