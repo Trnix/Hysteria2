@@ -6,7 +6,7 @@ SCRIPT_FILE_BASENAME="Hysteria2.sh" # The typical filename of this script
 SCRIPT_VERSION="1.1.0"
 SCRIPT_DATE="2025-05-08" # 当前日期
 
-HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPONAME/YOUR_BRANCH/${SCRIPT_FILE_BASENAME}"
+HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
 
 HYSTERIA_INSTALL_PATH="/usr/local/bin/hysteria"
 HYSTERIA_CONFIG_DIR="/etc/hysteria"
