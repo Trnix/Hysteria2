@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.3.7" # Incremented for SNI parsing fix
+SCRIPT_VERSION="1.3.8" # Incremented for SNI parsing fix
 SCRIPT_DATE="2025-05-08" 
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -69,33 +69,21 @@ _get_link_params_from_config() {
     HY_PORT=$(grep -E '^\s*listen:\s*:([0-9]+)' "$HYSTERIA_CONFIG_FILE" | sed -E 's/^\s*listen:\s*://' || echo "")
     echo "DEBUG PARSING: HY_PORT = [$HY_PORT]" >&2
 
-    # Parse Password (Using awk for multi-line robustness)
-    HY_PASSWORD=$(awk '
-        BEGIN { in_auth=0 }          # Flag to track if inside the auth: block
-        /^\s*auth:/ { in_auth=1; next } # Enter the auth block
-        # If inside auth block AND the line starts with optional spaces followed by "password:"
-        in_auth && /^\s*password:/ { 
-            password = $2;           # Get the second field (the password value)
-            gsub(/^["'\'']|["'\'']$/, "", password); # Remove potential surrounding quotes
-            print password;          # Print the found password
-            exit                     # Found it, no need to process further
-        }
-        # If we encounter a line that is not indented while in the auth block, it means the block ended
-        in_auth && !/^\s+/ { in_auth=0 } 
-        ' "$HYSTERIA_CONFIG_FILE")
+    # Parse Password (Using simple grep and sed targeting the value directly)
+    # Find lines with "password:", take first, remove key and whitespace, remove comments/trailing space
+    HY_PASSWORD=$(grep 'password:' "$HYSTERIA_CONFIG_FILE" | head -n 1 | sed -e 's/^.*password:[[:space:]]*//' -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/["'\'']//g' || echo "")
     echo "DEBUG PARSING: HY_PASSWORD (len=${#HY_PASSWORD}) = [$(echo "$HY_PASSWORD" | head -c 5)...]" >&2
 
 
     if grep -q '^\s*acme:' "$HYSTERIA_CONFIG_FILE"; then
-        # ... (ACME domain parsing using grep/sed - Keep this as it worked) ...
+        # ... (ACME domain parsing - Keep the working grep/sed) ...
         _log_info "检测到 ACME 配置。"
         DOMAIN_FROM_CONFIG=$(grep -A 1 '^\s*domains:' "$HYSTERIA_CONFIG_FILE" | grep '^\s*-\s*' | sed -e 's/^\s*-\s*//' -e 's/#.*//' -e 's/[ \t]*$//' -e 's/^["'\'']//' -e 's/["'\'']$//')
-        # echo "DEBUG: grep/sed 解析后的域名 = [$DOMAIN_FROM_CONFIG]" >&2 # Can comment out if needed
         if [ -z "$DOMAIN_FROM_CONFIG" ]; then _log_error "无法从配置解析ACME域名。"; return 1; fi
         _log_info "ACME 域名: $DOMAIN_FROM_CONFIG"
         HY_LINK_SNI="$DOMAIN_FROM_CONFIG"; HY_LINK_ADDRESS="$DOMAIN_FROM_CONFIG"; HY_LINK_INSECURE="0"; HY_SNI_VALUE="$DOMAIN_FROM_CONFIG"
     elif grep -q '^\s*tls:' "$HYSTERIA_CONFIG_FILE"; then
-        # ... (Custom TLS parsing - keep improved SNI extraction) ...
+        # ... (Custom TLS parsing - Keep improved SNI extraction) ...
          _log_info "检测到自定义 TLS 配置。"
         CERT_PATH_FROM_CONFIG=$(grep '^\s*tls:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*cert: \([^, }]*\).*/\1/p' || echo "")
         if [ -z "$CERT_PATH_FROM_CONFIG" ]; then _log_error "无法从配置解析证书路径。"; return 1; fi
