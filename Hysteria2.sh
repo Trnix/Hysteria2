@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.3.4" # Incremented for SNI parsing fix
+SCRIPT_VERSION="1.3.5" # Incremented for SNI parsing fix
 SCRIPT_DATE="2025-05-08" 
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -71,41 +71,15 @@ _get_link_params_from_config() {
     if grep -q '^\s*acme:' "$HYSTERIA_CONFIG_FILE"; then
         _log_info "检测到 ACME 配置。"
         
-        # --- 添加调试输出 ---
-        _log_info "调试：显示 config.yaml 内容用于解析："
-        echo "--- Config Content Start ---" >&2
-        cat "$HYSTERIA_CONFIG_FILE" >&2 || echo "无法读取配置文件内容" >&2
-        echo "--- Config Content End ---" >&2
-        # --- 结束调试输出 ---
+        # --- 使用 grep 和 sed 解析 ACME 域名 ---
+        # 1. 找到 domains: 那一行，并打印它后面的一行 (-A 1)
+        # 2. 在这后面的一行中，找到以 '-' 开头的行
+        # 3. 使用 sed 删除行首的 '- ' 和所有前后空格/引号/注释
+        DOMAIN_FROM_CONFIG=$(grep -A 1 '^\s*domains:' "$HYSTERIA_CONFIG_FILE" | grep '^\s*-\s*' | sed -e 's/^\s*-\s*//' -e 's/#.*//' -e 's/[ \t]*$//' -e 's/^["'\'']//' -e 's/["'\'']$//')
+        # --- 结束 grep/sed 解析 ---
 
-        # --- 更新后的 AWK 解析逻辑 ---
-        DOMAIN_FROM_CONFIG=$(awk '
-            BEGIN { in_acme=0; in_domains=0 }
-            /^\s*acme:/ { in_acme=1; next }
-            in_acme && /^\s*domains:/ { in_domains=1; next }
-            # 匹配以可选空格开头，然后是'-'，然后是至少一个空格，然后捕获剩余部分
-            in_acme && in_domains && /^\s*-\s+/ {
-                # 从第一个非空白字符开始获取域名字段
-                match($0, /-\s+(.*)/); 
-                domain = substr($0, RSTART + RLENGTH - length(substr($0, RSTART + RLENGTH)));
-                # 移除可能的注释和行尾空格
-                sub(/#.*/, "", domain); 
-                sub(/[ \t]+$/, "", domain);
-                # 移除可能的引号
-                gsub(/^["'\'']|["'\'']$/, "", domain);
-                print domain; 
-                exit; # 找到第一个就退出
-            }
-            # 如果离开了acme块或domains列表，重置标志位
-            in_acme && !/^\s+/ { in_acme=0; in_domains=0 } 
-            in_domains && !/^\s*-\s+/ && !/^\s*$/ { in_domains=0 } 
-            ' "$HYSTERIA_CONFIG_FILE")
-        # --- 结束 AWK 解析逻辑 ---
+        echo "DEBUG: grep/sed 解析后的域名 = [$DOMAIN_FROM_CONFIG]" >&2 # 保留调试输出
 
-        # --- 添加调试输出 ---
-        echo "DEBUG: AWK 解析后的域名 = [$DOMAIN_FROM_CONFIG]" >&2
-        # --- 结束调试输出 ---
-            
         if [ -z "$DOMAIN_FROM_CONFIG" ]; then 
             _log_error "无法从配置解析ACME域名。" 
             return 1
