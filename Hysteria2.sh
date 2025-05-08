@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.3.6" # Incremented for SNI parsing fix
+SCRIPT_VERSION="1.3.7" # Incremented for SNI parsing fix
 SCRIPT_DATE="2025-05-08" 
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -67,23 +67,36 @@ _get_link_params_from_config() {
 
     # Parse Port
     HY_PORT=$(grep -E '^\s*listen:\s*:([0-9]+)' "$HYSTERIA_CONFIG_FILE" | sed -E 's/^\s*listen:\s*://' || echo "")
-    echo "DEBUG PARSING: HY_PORT = [$HY_PORT]" >&2 # Added Debug
+    echo "DEBUG PARSING: HY_PORT = [$HY_PORT]" >&2
 
-    # Parse Password (Improved sed attempt 2)
-    # Looks for password: followed by optional space, then captures non-space/non-brace characters
-    HY_PASSWORD=$(grep '^\s*auth:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*password:[[:space:]]*\([^[:space:]}]*\).*/\1/p' || echo "")
-    echo "DEBUG PARSING: HY_PASSWORD (len=${#HY_PASSWORD}) = [$(echo "$HY_PASSWORD" | head -c 5)...]" >&2 # Added Debug (show first 5 chars)
+    # Parse Password (Using awk for multi-line robustness)
+    HY_PASSWORD=$(awk '
+        BEGIN { in_auth=0 }          # Flag to track if inside the auth: block
+        /^\s*auth:/ { in_auth=1; next } # Enter the auth block
+        # If inside auth block AND the line starts with optional spaces followed by "password:"
+        in_auth && /^\s*password:/ { 
+            password = $2;           # Get the second field (the password value)
+            gsub(/^["'\'']|["'\'']$/, "", password); # Remove potential surrounding quotes
+            print password;          # Print the found password
+            exit                     # Found it, no need to process further
+        }
+        # If we encounter a line that is not indented while in the auth block, it means the block ended
+        in_auth && !/^\s+/ { in_auth=0 } 
+        ' "$HYSTERIA_CONFIG_FILE")
+    echo "DEBUG PARSING: HY_PASSWORD (len=${#HY_PASSWORD}) = [$(echo "$HY_PASSWORD" | head -c 5)...]" >&2
 
 
     if grep -q '^\s*acme:' "$HYSTERIA_CONFIG_FILE"; then
+        # ... (ACME domain parsing using grep/sed - Keep this as it worked) ...
         _log_info "检测到 ACME 配置。"
         DOMAIN_FROM_CONFIG=$(grep -A 1 '^\s*domains:' "$HYSTERIA_CONFIG_FILE" | grep '^\s*-\s*' | sed -e 's/^\s*-\s*//' -e 's/#.*//' -e 's/[ \t]*$//' -e 's/^["'\'']//' -e 's/["'\'']$//')
-        # echo "DEBUG: grep/sed 解析后的域名 = [$DOMAIN_FROM_CONFIG]" >&2 # Domain parsing seems ok now
+        # echo "DEBUG: grep/sed 解析后的域名 = [$DOMAIN_FROM_CONFIG]" >&2 # Can comment out if needed
         if [ -z "$DOMAIN_FROM_CONFIG" ]; then _log_error "无法从配置解析ACME域名。"; return 1; fi
         _log_info "ACME 域名: $DOMAIN_FROM_CONFIG"
         HY_LINK_SNI="$DOMAIN_FROM_CONFIG"; HY_LINK_ADDRESS="$DOMAIN_FROM_CONFIG"; HY_LINK_INSECURE="0"; HY_SNI_VALUE="$DOMAIN_FROM_CONFIG"
     elif grep -q '^\s*tls:' "$HYSTERIA_CONFIG_FILE"; then
-        _log_info "检测到自定义 TLS 配置。"
+        # ... (Custom TLS parsing - keep improved SNI extraction) ...
+         _log_info "检测到自定义 TLS 配置。"
         CERT_PATH_FROM_CONFIG=$(grep '^\s*tls:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*cert: \([^, }]*\).*/\1/p' || echo "")
         if [ -z "$CERT_PATH_FROM_CONFIG" ]; then _log_error "无法从配置解析证书路径。"; return 1; fi
         if [[ "$CERT_PATH_FROM_CONFIG" != /* ]]; then CERT_PATH_FROM_CONFIG="${HYSTERIA_CONFIG_DIR}/${CERT_PATH_FROM_CONFIG}"; fi
@@ -98,16 +111,13 @@ _get_link_params_from_config() {
 
     # --- Final Check Debug Line ---
     echo "DEBUG_FINAL_CHECK: PORT='${HY_PORT}', PWD_len='${#HY_PASSWORD}', ADDR='${HY_LINK_ADDRESS}', SNI='${HY_LINK_SNI}', INSECURE='${HY_LINK_INSECURE}', SNI_VAL='${HY_SNI_VALUE}'" >&2
-    # --- End Debug Line ---
 
     if [ -z "$HY_PORT" ] || [ -z "$HY_PASSWORD" ] || [ -z "$HY_LINK_ADDRESS" ] || [ -z "$HY_LINK_SNI" ] || [ -z "$HY_LINK_INSECURE" ] || [ -z "$HY_SNI_VALUE" ]; then
         _log_error "未能从配置文件解析生成链接所需的所有参数。"
-        # Add more specific checks
         if [ -z "$HY_PORT" ]; then _log_error "  - 端口 (Port) 解析失败。"; fi
         if [ -z "$HY_PASSWORD" ]; then _log_error "  - 密码 (Password) 解析失败。"; fi
         if [ -z "$HY_LINK_ADDRESS" ]; then _log_error "  - 链接地址 (Link Address) 解析/获取失败。"; fi
         if [ -z "$HY_LINK_SNI" ]; then _log_error "  - 链接SNI (Link SNI) 解析失败。"; fi
-        if [ -z "$HY_LINK_INSECURE" ]; then _log_error "  - Insecure 标志获取失败。"; fi
         if [ -z "$HY_SNI_VALUE" ]; then _log_error "  - SNI值 (SNI Value) 解析/获取失败。"; fi
         return 1
     fi
