@@ -111,7 +111,7 @@ _install_dependencies() {
         _log_warning "更新软件包列表失败，尝试继续..."
     fi
 
-    REQUIRED_PKGS_COMMON="wget curl git openssl lsof coreutils realpath"
+    REQUIRED_PKGS_COMMON="wget curl git openssl lsof coreutils"
     REQUIRED_PKGS="$REQUIRED_PKGS_COMMON"
     if [ -n "$REQUIRED_PKGS_OS_SPECIFIC" ]; then
         REQUIRED_PKGS="$REQUIRED_PKGS $REQUIRED_PKGS_OS_SPECIFIC"
