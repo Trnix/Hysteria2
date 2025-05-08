@@ -3,8 +3,8 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.3.1" # Incremented for parsing fixes and update
-SCRIPT_DATE="2025-05-08"
+SCRIPT_VERSION="1.3.2" # Incremented for SNI parsing fix
+SCRIPT_DATE="2025-05-08" 
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
 
@@ -12,14 +12,15 @@ HYSTERIA_INSTALL_PATH="/usr/local/bin/hysteria"
 HYSTERIA_CONFIG_DIR="/etc/hysteria"
 HYSTERIA_CONFIG_FILE="${HYSTERIA_CONFIG_DIR}/config.yaml"
 HYSTERIA_CERTS_DIR="${HYSTERIA_CONFIG_DIR}/certs"
-HYSTERIA_INSTALL_VARS_FILE="${HYSTERIA_CONFIG_DIR}/install_vars.conf" # Legacy, will be removed on uninstall
+# HYSTERIA_INSTALL_VARS_FILE is no longer actively used by info/qrcode, only removed on uninstall if exists
+HYSTERIA_INSTALL_VARS_FILE="${HYSTERIA_CONFIG_DIR}/install_vars.conf"
 HYSTERIA_SERVICE_NAME_SYSTEMD="hysteria.service"
 HYSTERIA_SERVICE_NAME_OPENRC="hysteria"
 LOG_FILE_OUT="/var/log/hysteria.log"
 LOG_FILE_ERR="/var/log/hysteria.error.log"
 
 # --- Color Definitions ---
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BLUE='\033[0;34m'; NC='\033[0m' 
 
 # --- Global OS Detection Variables ---
 DISTRO_FAMILY=""; PKG_INSTALL_CMD=""; PKG_UPDATE_CMD=""; PKG_REMOVE_CMD=""
@@ -57,66 +58,45 @@ _setup_hy_command() {
 }
 
 _get_link_params_from_config() {
-    # This function now parses config directly and sets global vars for link generation
-    unset HY_PASSWORD HY_LINK_ADDRESS HY_PORT HY_LINK_SNI HY_LINK_INSECURE HY_SNI_VALUE DOMAIN_FROM_CONFIG CERT_PATH_FROM_CONFIG KEY_PATH_FROM_CONFIG
+    # Parses current config for link generation parameters
+    unset HY_PASSWORD HY_LINK_ADDRESS HY_PORT HY_LINK_SNI HY_LINK_INSECURE HY_SNI_VALUE DOMAIN_FROM_CONFIG CERT_PATH_FROM_CONFIG
     
     if [ ! -f "$HYSTERIA_CONFIG_FILE" ]; then _log_error "配置文件 $HYSTERIA_CONFIG_FILE 未找到。"; return 1; fi
 
     _log_info "正从 $HYSTERIA_CONFIG_FILE 解析配置以生成链接..."
 
-    # Use grep and sed/awk for safer parsing
     HY_PORT=$(grep -E '^\s*listen:\s*:([0-9]+)' "$HYSTERIA_CONFIG_FILE" | sed -E 's/^\s*listen:\s*://' || echo "")
     HY_PASSWORD=$(grep '^\s*auth:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*password: \([^ ,}]*\).*/\1/p' || echo "")
 
     if grep -q '^\s*acme:' "$HYSTERIA_CONFIG_FILE"; then
-        # ACME Mode
         _log_info "检测到 ACME 配置。"
         DOMAIN_FROM_CONFIG=$(grep '^\s*acme:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*domains: \[- \([^]]*\) \].*/\1/p' | sed 's/["'\'']//g' || echo "")
         if [ -z "$DOMAIN_FROM_CONFIG" ]; then _log_error "无法从配置解析ACME域名。"; return 1; fi
         _log_info "ACME 域名: $DOMAIN_FROM_CONFIG"
-        HY_LINK_SNI="$DOMAIN_FROM_CONFIG"
-        HY_LINK_ADDRESS="$DOMAIN_FROM_CONFIG"
-        HY_LINK_INSECURE="0"
-        HY_SNI_VALUE="$DOMAIN_FROM_CONFIG" # For fragment
+        HY_LINK_SNI="$DOMAIN_FROM_CONFIG"; HY_LINK_ADDRESS="$DOMAIN_FROM_CONFIG"; HY_LINK_INSECURE="0"; HY_SNI_VALUE="$DOMAIN_FROM_CONFIG"
     elif grep -q '^\s*tls:' "$HYSTERIA_CONFIG_FILE"; then
-        # Custom TLS Mode
-         _log_info "检测到自定义 TLS 配置。"
+        _log_info "检测到自定义 TLS 配置。"
         CERT_PATH_FROM_CONFIG=$(grep '^\s*tls:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*cert: \([^, }]*\).*/\1/p' || echo "")
-        KEY_PATH_FROM_CONFIG=$(grep '^\s*tls:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*key: \([^ }]*\).*/\1/p' || echo "") # Key path likely ends with brace
-
         if [ -z "$CERT_PATH_FROM_CONFIG" ]; then _log_error "无法从配置解析证书路径。"; return 1; fi
+        if [[ "$CERT_PATH_FROM_CONFIG" != /* ]]; then CERT_PATH_FROM_CONFIG="${HYSTERIA_CONFIG_DIR}/${CERT_PATH_FROM_CONFIG}"; fi # Handle relative path
         if [ ! -f "$CERT_PATH_FROM_CONFIG" ]; then _log_error "配置文件中的证书路径 '$CERT_PATH_FROM_CONFIG' 无效或文件不存在。"; return 1; fi
-         _log_info "证书路径: $CERT_PATH_FROM_CONFIG"
-
-        # Try extracting SNI from cert
+        _log_info "证书路径: $CERT_PATH_FROM_CONFIG"
         _log_info "尝试从证书提取 SNI..."
-        HY_SNI_VALUE=$(openssl x509 -noout -subject -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | grep -o 'CN=[^,]*' | cut -d= -f2 | tr -d ' ' | head -n 1)
-        if [ -z "$HY_SNI_VALUE" ]; then HY_SNI_VALUE=$(openssl x509 -noout -text -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | grep 'DNS:' | sed 's/DNS://g' | tr -d ' ' | cut -d, -f1 | head -n 1); fi
-        if [ -z "$HY_SNI_VALUE" ]; then _log_warning "无法从证书'$CERT_PATH_FROM_CONFIG'提取SNI, 使用'sni_unknown'代替。"; HY_SNI_VALUE="sni_unknown"; else _log_info "提取到 SNI: $HY_SNI_VALUE"; fi
-
-        HY_LINK_SNI="$HY_SNI_VALUE"
-        HY_LINK_ADDRESS=$(_get_server_address) # Re-fetch current IP
-        if [ $? -ne 0 ] || [ -z "$HY_LINK_ADDRESS" ]; then _log_error "获取服务器公网地址失败，无法生成链接地址部分。"; return 1; fi
-        HY_LINK_INSECURE="1"
-    else
-        _log_error "无法确定TLS模式 (ACME或自定义)。"
-        return 1
-    fi
-
-    # Final check for essential link parameters
-    if [ -z "$HY_PORT" ] || [ -z "$HY_PASSWORD" ] || [ -z "$HY_LINK_ADDRESS" ] || [ -z "$HY_LINK_SNI" ] || [ -z "$HY_LINK_INSECURE" ] || [ -z "$HY_SNI_VALUE" ]; then
-        _log_error "未能从配置文件解析生成链接所需的所有参数。"
-        echo "DEBUG: PORT='$HY_PORT', PWD_len='${#HY_PASSWORD}', ADDR='$HY_LINK_ADDRESS', SNI='$HY_LINK_SNI', INSECURE='$HY_LINK_INSECURE', SNI_VAL='$HY_SNI_VALUE'"
-        return 1
-    fi
-    _log_info "成功解析链接参数。"
-    return 0
+        # Try extracting CN first, then SAN
+        HY_SNI_VALUE=$(openssl x509 -noout -subject -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | sed -n 's/.*CN ?= ?\([^,]*\).*/\1/p' | head -n 1 | sed 's/^[ \t]*//;s/[ \t]*$//') # Trim whitespace
+        if [ -z "$HY_SNI_VALUE" ]; then _log_info "从 CN 提取失败或为空，尝试从 SAN 提取..."; HY_SNI_VALUE=$(openssl x509 -noout -text -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | grep 'DNS:' | head -n 1 | sed 's/.*DNS://' | tr -d ' ' | cut -d, -f1); fi
+        if [ -z "$HY_SNI_VALUE" ]; then _log_warning "无法从证书'$CERT_PATH_FROM_CONFIG'提取有效SNI(CN或SAN), 使用'sni_unknown'代替。"; HY_SNI_VALUE="sni_unknown"; else _log_info "提取到 SNI: $HY_SNI_VALUE"; fi
+        HY_LINK_SNI="$HY_SNI_VALUE"; HY_LINK_ADDRESS=$(_get_server_address); if [ $? -ne 0 ] || [ -z "$HY_LINK_ADDRESS" ]; then _log_error "获取公网地址失败。"; return 1; fi; HY_LINK_INSECURE="1"
+    else _log_error "无法确定TLS模式。"; return 1; fi
+    if [ -z "$HY_PORT" ] || [ -z "$HY_PASSWORD" ] || [ -z "$HY_LINK_ADDRESS" ] || [ -z "$HY_LINK_SNI" ] || [ -z "$HY_LINK_INSECURE" ] || [ -z "$HY_SNI_VALUE" ]; then _log_error "未能解析生成链接所需的所有参数。"; return 1; fi
+    _log_info "成功解析链接参数。"; return 0
 }
 
-
 _do_install() {
-    # ... (Installation logic remains largely the same) ...
-    # Remove the section that saves variables to HYSTERIA_INSTALL_VARS_FILE at the end.
+    # ... (Installation logic remains largely the same as previous version) ...
+    # Ensure user prompts use _read_from_tty
+    # Ensure config generation produces stable output for parsing
+    # REMOVE saving vars to install_vars.conf at the end
     _ensure_root; _detect_os
     if _is_hysteria_installed; then _read_confirm_tty confirm_install "Hysteria 已安装。是否强制安装(覆盖配置)? [y/N]: "; if [[ "$confirm_install" != "y" && "$confirm_install" != "Y" ]]; then _log_info "安装取消。"; exit 0; fi; _log_warning "正强制安装..."; fi
     _install_dependencies
@@ -125,7 +105,7 @@ _do_install() {
     CERT_PATH=""; KEY_PATH=""; DOMAIN=""; SNI_VALUE=""; ACME_EMAIL=""
     case $TLS_TYPE in 1) _log_info "--- 自定义证书模式 ---"; _read_from_tty USER_CERT_PATH "证书路径(.crt/.pem)(留空则自签): ";
             if [ -z "$USER_CERT_PATH" ]; then _log_info "将生成自签名证书。"; if ! command -v openssl &>/dev/null; then _log_error "openssl未安装 ($PKG_INSTALL_CMD openssl)"; exit 1; fi; _read_from_tty SELF_SIGN_SNI "自签名证书SNI(默认www.bing.com): "; SELF_SIGN_SNI=${SELF_SIGN_SNI:-"www.bing.com"}; SNI_VALUE="$SELF_SIGN_SNI"; mkdir -p "$HYSTERIA_CERTS_DIR"; CERT_PATH="$HYSTERIA_CERTS_DIR/server.crt"; KEY_PATH="$HYSTERIA_CERTS_DIR/server.key"; _log_info "正生成自签证书(CN=$SNI_VALUE)..."; if ! openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) -keyout "$KEY_PATH" -out "$CERT_PATH" -subj "/CN=$SNI_VALUE" -days 36500; then _log_error "自签证书生成失败!"; exit 1; fi; _log_success "自签证书已生成: $CERT_PATH, $KEY_PATH";
-            else _log_info "提供证书路径: $USER_CERT_PATH"; _read_from_tty USER_KEY_PATH "私钥路径(.key/.pem): "; if [ -z "$USER_KEY_PATH" ]; then _log_error "私钥路径不能为空。"; exit 1; fi; TMP_CERT_PATH=$(realpath "$USER_CERT_PATH" 2>/dev/null); TMP_KEY_PATH=$(realpath "$USER_KEY_PATH" 2>/dev/null); if [ ! -f "$TMP_CERT_PATH" ]; then _log_error "证书'$USER_CERT_PATH'('$TMP_CERT_PATH')无效."; exit 1; fi; if [ ! -f "$TMP_KEY_PATH" ]; then _log_error "私钥'$USER_KEY_PATH'('$TMP_KEY_PATH')无效."; exit 1; fi; CERT_PATH="$TMP_CERT_PATH"; KEY_PATH="$TMP_KEY_PATH"; SNI_VALUE=$(openssl x509 -noout -subject -in "$CERT_PATH" 2>/dev/null | grep -o 'CN=[^,]*' | cut -d= -f2 | tr -d ' ' | head -n 1); if [ -z "$SNI_VALUE" ]; then SNI_VALUE=$(openssl x509 -noout -text -in "$CERT_PATH" 2>/dev/null | grep 'DNS:' | sed 's/DNS://g' | tr -d ' ' | cut -d, -f1 | head -n 1); fi; if [ -z "$SNI_VALUE" ]; then _read_from_tty MANUAL_SNI "无法提取SNI, 请手动输入: "; if [ -z "$MANUAL_SNI" ]; then _log_error "SNI不能为空!"; exit 1; fi; SNI_VALUE="$MANUAL_SNI"; else _log_info "提取到SNI: $SNI_VALUE"; fi; fi;;
+            else _log_info "提供证书路径: $USER_CERT_PATH"; _read_from_tty USER_KEY_PATH "私钥路径(.key/.pem): "; if [ -z "$USER_KEY_PATH" ]; then _log_error "私钥路径不能为空。"; exit 1; fi; TMP_CERT_PATH=$(realpath "$USER_CERT_PATH" 2>/dev/null); TMP_KEY_PATH=$(realpath "$USER_KEY_PATH" 2>/dev/null); if [ ! -f "$TMP_CERT_PATH" ]; then _log_error "证书'$USER_CERT_PATH'('$TMP_CERT_PATH')无效."; exit 1; fi; if [ ! -f "$TMP_KEY_PATH" ]; then _log_error "私钥'$USER_KEY_PATH'('$TMP_KEY_PATH')无效."; exit 1; fi; CERT_PATH="$TMP_CERT_PATH"; KEY_PATH="$TMP_KEY_PATH"; SNI_VALUE=$(openssl x509 -noout -subject -in "$CERT_PATH" 2>/dev/null | sed -n 's/.*CN ?= ?\([^,]*\).*/\1/p' | head -n 1 | sed 's/^[ \t]*//;s/[ \t]*$//'); if [ -z "$SNI_VALUE" ]; then SNI_VALUE=$(openssl x509 -noout -text -in "$CERT_PATH" 2>/dev/null | grep 'DNS:' | head -n 1 | sed 's/.*DNS://' | tr -d ' ' | cut -d, -f1); fi; if [ -z "$SNI_VALUE" ]; then _read_from_tty MANUAL_SNI "无法提取SNI, 请手动输入: "; if [ -z "$MANUAL_SNI" ]; then _log_error "SNI不能为空!"; exit 1; fi; SNI_VALUE="$MANUAL_SNI"; else _log_info "提取到SNI: $SNI_VALUE"; fi; fi;;
         2) _log_info "--- ACME HTTP 验证 ---"; _read_from_tty DOMAIN "域名(eg: example.com): "; if [ -z "$DOMAIN" ]; then _log_error "域名不能为空!"; exit 1; fi; _read_from_tty INPUT_ACME_EMAIL "ACME邮箱(默认 $DEFAULT_ACME_EMAIL): "; ACME_EMAIL=${INPUT_ACME_EMAIL:-$DEFAULT_ACME_EMAIL}; if [ -z "$ACME_EMAIL" ]; then _log_error "邮箱不能为空!"; exit 1; fi; SNI_VALUE=$DOMAIN; _log_info "检查80端口..."; if lsof -i:80 -sTCP:LISTEN -P -n &>/dev/null; then _log_warning "80端口被占用!"; PID_80=$(lsof -t -i:80 -sTCP:LISTEN); [ -n "$PID_80" ] && _log_info "占用进程PID: $PID_80"; else _log_info "80端口可用。"; fi;;
         *) _log_error "无效TLS选项。"; exit 1;;
     esac
@@ -137,22 +117,47 @@ _do_install() {
     if ! wget -qO "$HYSTERIA_INSTALL_PATH" "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HYSTERIA_ARCH}"; then _log_warning "GitHub下载失败,尝试旧地址..."; if ! wget -qO "$HYSTERIA_INSTALL_PATH" "https://download.hysteria.network/app/latest/hysteria-linux-${HYSTERIA_ARCH}"; then _log_error "下载Hysteria失败!"; exit 1; fi; fi
     chmod +x "$HYSTERIA_INSTALL_PATH"; _log_success "Hysteria下载设置完成: $HYSTERIA_INSTALL_PATH"
     if [ "$TLS_TYPE" -eq 2 ]; then _log_info "设置cap_net_bind_service权限(ACME)..."; if ! command -v setcap &>/dev/null; then _log_warning "setcap未找到,尝试安装$SETCAP_DEPENDENCY_PKG..."; if ! $PKG_INSTALL_CMD "$SETCAP_DEPENDENCY_PKG" >/dev/null; then _log_error "安装$SETCAP_DEPENDENCY_PKG失败."; else _log_success "$SETCAP_DEPENDENCY_PKG安装成功."; fi; fi; if command -v setcap &>/dev/null; then if ! setcap 'cap_net_bind_service=+ep' "$HYSTERIA_INSTALL_PATH"; then _log_error "setcap失败."; else _log_success "setcap成功."; fi; else _log_error "setcap仍不可用."; fi; fi
-    _log_info "生成配置文件 $HYSTERIA_CONFIG_FILE..."; cat > "$HYSTERIA_CONFIG_FILE" << EOF
+    
+    # Generate config with potentially multi-line structure for better readability/parsing
+    _log_info "生成配置文件 $HYSTERIA_CONFIG_FILE..."; 
+    cat > "$HYSTERIA_CONFIG_FILE" << EOF
+# Hysteria 2 服务器配置文件
+# 由 ${SCRIPT_COMMAND_NAME} v${SCRIPT_VERSION} 在 $(date) 生成
+
 listen: :$PORT
-auth: {type: password, password: $PASSWORD}
-masquerade: {type: proxy, proxy: {url: $MASQUERADE_URL, rewriteHost: true}}
+
+auth:
+  type: password
+  password: $PASSWORD
+
+masquerade:
+  type: proxy
+  proxy:
+    url: $MASQUERADE_URL
+    rewriteHost: true
 EOF
-    # Save local variables needed for immediate link generation after config write
-    LOCAL_LINK_SNI=""; LOCAL_LINK_ADDRESS=""; LOCAL_LINK_INSECURE=0; LOCAL_SNI_VALUE="$SNI_VALUE"
-    case $TLS_TYPE in 1) cat >> "$HYSTERIA_CONFIG_FILE" << EOF
-tls: {cert: $CERT_PATH, key: $KEY_PATH}
+
+    LOCAL_LINK_SNI=""; LOCAL_LINK_ADDRESS=""; LOCAL_LINK_INSECURE=0; LOCAL_SNI_VALUE="$SNI_VALUE" # Local vars for immediate link generation
+    case $TLS_TYPE in 
+        1) cat >> "$HYSTERIA_CONFIG_FILE" << EOF
+
+tls:
+  cert: $CERT_PATH
+  key: $KEY_PATH
 EOF
-           LOCAL_LINK_SNI="$SNI_VALUE"; LOCAL_LINK_ADDRESS="$SERVER_PUBLIC_ADDRESS"; LOCAL_LINK_INSECURE=1; _log_warning "自定义证书客户端需设insecure:true";;
+           LOCAL_LINK_SNI="$SNI_VALUE"; LOCAL_LINK_ADDRESS="$SERVER_PUBLIC_ADDRESS"; LOCAL_LINK_INSECURE=1; _log_warning "自定义证书客户端需设insecure:true";; 
         2) cat >> "$HYSTERIA_CONFIG_FILE" << EOF
-acme: {domains: [- $DOMAIN], email: $ACME_EMAIL}
+
+acme:
+  domains:
+    - $DOMAIN
+  email: $ACME_EMAIL
 EOF
-           LOCAL_LINK_SNI="$DOMAIN"; LOCAL_LINK_ADDRESS="$DOMAIN"; LOCAL_LINK_INSECURE=0;;
-    esac; _log_success "配置文件完成。"
+           LOCAL_LINK_SNI="$DOMAIN"; LOCAL_LINK_ADDRESS="$DOMAIN"; LOCAL_LINK_INSECURE=0;; 
+    esac; 
+    _log_success "配置文件完成。"
+
+    # Create Service File
     if [ "$INIT_SYSTEM" == "systemd" ]; then _log_info "创建systemd服务..."; cat > "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME" << EOF
 [Unit]
 Description=Hysteria 2 Service by $SCRIPT_COMMAND_NAME
@@ -175,12 +180,15 @@ start() { ebegin "Starting \$name"; start-stop-daemon --start --quiet --backgrou
 stop() { ebegin "Stopping \$name"; start-stop-daemon --stop --quiet --pidfile \$pidfile; eend \$?; }
 EOF
         chmod +x "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME"; fi; _log_success "服务文件创建成功。"
+    
+    # Enable and Restart Service
     _control_service "enable"; _control_service "restart"
     sleep 2; if _control_service "status" > /dev/null; then _log_success "Hysteria服务已成功运行！"; else _log_error "Hysteria服务状态异常!"; fi
     
-    _setup_hy_command # Setup 'hy' command
-
-    # Display info using the local variables set during install process
+    # Setup 'hy' command
+    _setup_hy_command
+    
+    # Display final info based on local vars from install process
     SUBSCRIPTION_LINK="hysteria2://${PASSWORD}@${LOCAL_LINK_ADDRESS}:${PORT}/?sni=${LOCAL_LINK_SNI}&alpn=h3&insecure=${LOCAL_LINK_INSECURE}#Hysteria-${LOCAL_SNI_VALUE}"
     echo ""; echo "------------------------------------------------------------------------"; _log_success "Hysteria 2安装配置完成！"; echo "------------------------------------------------------------------------"
     echo "服务器地址: $LOCAL_LINK_ADDRESS"; echo "端口: $PORT"; echo "密码: $PASSWORD"; echo "SNI: $LOCAL_LINK_SNI"
@@ -191,6 +199,7 @@ EOF
 }
 
 _do_uninstall() {
+    # ... (Uninstall logic remains the same as previous version, including qrencode check) ...
     _ensure_root; _detect_os
     if ! _is_hysteria_installed; then _log_warning "Hysteria未安装或未被管理。"; _read_confirm_tty confirm_force_uninstall "仍尝试标准卸载步骤? [y/N]: "; if [[ "$confirm_force_uninstall" != "y" && "$confirm_force_uninstall" != "Y" ]]; then _log_info "卸载取消。"; exit 0; fi; fi
     _read_confirm_tty confirm_uninstall "将卸载Hysteria并删除配置。确定? [y/N]: "; if [[ "$confirm_uninstall" != "y" && "$confirm_uninstall" != "Y" ]]; then _log_info "卸载取消。"; exit 0; fi
@@ -206,7 +215,7 @@ _do_uninstall() {
 }
 
 _control_service() {
-    # ... (No changes needed here from previous version) ...
+    # ... (Function remains the same as previous version) ...
     _detect_os; local action="$1"
     if [[ "$action" == "start" || "$action" == "stop" || "$action" == "restart" || "$action" == "status" ]]; then if ! _is_hysteria_installed; then _log_error "Hysteria未安装或服务未配置。请用'${SCRIPT_COMMAND_NAME} install'安装。"; return 1; fi; fi
     case "$action" in start|stop|restart) _ensure_root; _log_info "执行: $SERVICE_CMD $action $CURRENT_HYSTERIA_SERVICE_NAME"
@@ -221,7 +230,7 @@ _control_service() {
 }
 
 _show_config() {
-    # ... (Use the improved parsing from the previous response's thought process) ...
+    # Use improved parsing logic
     _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria未安装。无配置显示。"; return 1; fi
     _log_info "当前Hysteria配置文件($HYSTERIA_CONFIG_FILE):"; echo "----------------------------------------------------"
     if [ -f "$HYSTERIA_CONFIG_FILE" ]; then cat "$HYSTERIA_CONFIG_FILE"; else _log_error "配置文件不存在。"; fi; echo "----------------------------------------------------"; _log_info "配置摘要:"
@@ -235,9 +244,10 @@ _show_config() {
 }
 
 _change_config_interactive() {
-    # ... (Function remains the same as previous version, using improved parsing internally) ...
+    # ... (Function remains the same as previous version) ...
+    # Note: This function does NOT handle TLS mode switching. Use 'hy install' for that.
     _ensure_root; _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria未安装。无法更改。"; return 1; fi
-    _log_info "更改Hysteria配置(部分)"; _log_warning "此功能通过awk修改配置,复杂情况可能不健壮。"; _log_warning "强烈建议备份$HYSTERIA_CONFIG_FILE。"; _log_warning "当前支持:监听端口,密码,伪装URL。"
+    _log_info "更改Hysteria配置(部分)"; _log_warning "此功能通过awk修改配置,复杂情况可能不健壮。"; _log_warning "强烈建议备份$HYSTERIA_CONFIG_FILE。"; _log_warning "当前支持:监听端口,密码,伪装URL。"; _log_warning "如需更改TLS模式等重大配置, 请使用 'sudo ${SCRIPT_COMMAND_NAME} install' 命令。"
     CURRENT_PORT=$(grep -E '^\s*listen:\s*:([0-9]+)' "$HYSTERIA_CONFIG_FILE" | sed -E 's/^\s*listen:\s*://' || echo ""); CURRENT_PASSWORD_RAW=$(grep '^\s*auth:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*password: \([^ ,}]*\).*/\1/p' || echo ""); CURRENT_MASQUERADE=$(grep '^\s*masquerade:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*url: \([^, }]*\).*/\1/p' || echo "")
     _read_from_tty NEW_PORT "新监听端口" "$CURRENT_PORT"; NEW_PORT=${NEW_PORT:-$CURRENT_PORT}
     _read_from_tty NEW_PASSWORD_INPUT "新密码" "$CURRENT_PASSWORD_RAW"; NEW_PASSWORD=""; if [ -n "$NEW_PASSWORD_INPUT" ]; then if [ "$NEW_PASSWORD_INPUT" == "random" ]; then NEW_PASSWORD=$(_generate_uuid); _log_info "生成新随机密码:$NEW_PASSWORD"; else NEW_PASSWORD="$NEW_PASSWORD_INPUT"; fi; else NEW_PASSWORD="$CURRENT_PASSWORD_RAW"; fi
@@ -252,43 +262,42 @@ _change_config_interactive() {
 
 _show_info_link() {
     _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; return 1; fi
-    if ! _get_link_params_from_config; then _log_error "无法从当前配置生成订阅链接信息。"; return 1; fi
+    if ! _get_link_params_from_config; then _log_error "无法从当前配置生成订阅链接信息。"; return 1; fi # Uses global HY_* vars set by function
     SUBSCRIPTION_LINK="hysteria2://${HY_PASSWORD}@${HY_LINK_ADDRESS}:${HY_PORT}/?sni=${HY_LINK_SNI}&alpn=h3&insecure=${HY_LINK_INSECURE}#Hysteria-${HY_SNI_VALUE}"
     echo ""; _log_info "Hysteria V2 订阅链接 (根据当前配置生成):"; echo -e "${GREEN}${SUBSCRIPTION_LINK}${NC}"; echo ""
 }
 
 _show_qrcode() {
     _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; return 1; fi
-    if ! _get_link_params_from_config; then _log_error "无法从当前配置生成二维码信息。"; return 1; fi
+    if ! _get_link_params_from_config; then _log_error "无法从当前配置生成二维码信息。"; return 1; fi # Uses global HY_* vars set by function
     SUBSCRIPTION_LINK="hysteria2://${HY_PASSWORD}@${HY_LINK_ADDRESS}:${HY_PORT}/?sni=${HY_LINK_SNI}&alpn=h3&insecure=${HY_LINK_INSECURE}#Hysteria-${HY_SNI_VALUE}"
     if command -v qrencode &>/dev/null; then _log_info "Hysteria V2 订阅链接二维码:"; qrencode -t ANSIUTF8 "$SUBSCRIPTION_LINK";
-    else _log_error "'qrencode' 命令未找到。"; _log_info "请先安装 qrencode: sudo $PKG_INSTALL_CMD qrencode"; _log_info "或者手动复制以下订阅链接使用："; echo -e "${GREEN}${SUBSCRIPTION_LINK}${NC}"; fi
+    else _log_error "'qrencode' 命令未找到。"; _log_info "请先安装 qrencode: sudo $PKG_INSTALL_CMD qrencode"; _log_info "或手动复制订阅链接："; echo -e "${GREEN}${SUBSCRIPTION_LINK}${NC}"; fi
 }
 
 _update_hysteria_binary() {
     _ensure_root; _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。无法更新。"; return 1; fi
-    _log_info "检查 Hysteria 程序更新..."; CURRENT_VER=$("$HYSTERIA_INSTALL_PATH" version 2>/dev/null | awk '{print $3}'); if [ -z "$CURRENT_VER" ]; then _log_warning "无法获取当前版本。将尝试下载最新。"; CURRENT_VER="unknown"; else _log_info "当前版本: $CURRENT_VER"; fi
+    _log_info "检查 Hysteria 程序更新..."; CURRENT_VER=$("$HYSTERIA_INSTALL_PATH" version 2>/dev/null | awk '{print $3}'); if [ -z "$CURRENT_VER" ]; then _log_warning "无法获取当前版本。尝试下载最新。"; CURRENT_VER="unknown"; else _log_info "当前版本: $CURRENT_VER"; fi
     _log_info "获取最新版本号..."; LATEST_VER_TAG=$(curl -s --connect-timeout 5 "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'); if [ -z "$LATEST_VER_TAG" ]; then _log_warning "无法从 GitHub API 获取版本号。尝试直接下载'latest'。"; LATEST_VER="latest"; else LATEST_VER=$LATEST_VER_TAG; _log_info "最新版本: $LATEST_VER"; fi
-    if [[ "$CURRENT_VER" == "$LATEST_VER" && "$CURRENT_VER" != "unknown" ]]; then _log_success "当前已是最新版本 ($CURRENT_VER)。"; return 0; fi
+    if [[ "$CURRENT_VER" == "$LATEST_VER" && "$CURRENT_VER" != "unknown" && "$LATEST_VER" != "latest" ]]; then _log_success "当前已是最新版本 ($CURRENT_VER)。"; return 0; fi
     _log_info "下载 Hysteria $LATEST_VER ..."; ARCH=$(uname -m); case ${ARCH} in x86_64) HYSTERIA_ARCH="amd64";; aarch64) HYSTERIA_ARCH="arm64";; armv7l) HYSTERIA_ARCH="arm";; *) _log_error "不支持架构: ${ARCH}"; exit 1;; esac; TMP_HY_DOWNLOAD=$(mktemp); DOWNLOAD_URL="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HYSTERIA_ARCH}"
     if ! wget -qO "$TMP_HY_DOWNLOAD" "$DOWNLOAD_URL"; then _log_error "下载失败! URL: $DOWNLOAD_URL"; rm -f "$TMP_HY_DOWNLOAD"; return 1; fi
     if ! file "$TMP_HY_DOWNLOAD" | grep -q "executable"; then _log_error "下载文件非可执行。"; rm -f "$TMP_HY_DOWNLOAD"; return 1; fi; chmod +x "$TMP_HY_DOWNLOAD"; DOWNLOADED_VER=$("$TMP_HY_DOWNLOAD" version 2>/dev/null | awk '{print $3}'); if [[ -n "$DOWNLOADED_VER" && "$DOWNLOADED_VER" == "$CURRENT_VER" ]]; then _log_info "下载版本($DOWNLOADED_VER)与当前相同。"; rm -f "$TMP_HY_DOWNLOAD"; return 0; elif [[ -n "$DOWNLOADED_VER" ]]; then _log_info "下载版本为: $DOWNLOADED_VER"; fi
-    _log_info "准备替换..."; _control_service "stop"; sleep 1; if mv "$TMP_HY_DOWNLOAD" "$HYSTERIA_INSTALL_PATH"; then _log_success "Hysteria已更新至$DOWNLOADED_VER(或latest)。"; if getcap "$HYSTERIA_INSTALL_PATH" 2>/dev/null | grep -q "cap_net_bind_service"; then _log_info "重新应用setcap权限..."; if ! setcap 'cap_net_bind_service=+ep' "$HYSTERIA_INSTALL_PATH"; then _log_warning "重应用setcap失败。"; fi; fi; _control_service "start"; else _log_error "替换失败。"; rm -f "$TMP_HY_DOWNLOAD"; _log_info "尝试重启旧服务..."; _control_service "start"; return 1; fi
+    _log_info "准备替换..."; _control_service "stop"; sleep 1; if mv "$TMP_HY_DOWNLOAD" "$HYSTERIA_INSTALL_PATH"; then _log_success "Hysteria已更新至$DOWNLOADED_VER(或latest)。"; if getcap "$HYSTERIA_INSTALL_PATH" 2>/dev/null | grep -q "cap_net_bind_service"; then _log_info "重应用setcap权限..."; if ! setcap 'cap_net_bind_service=+ep' "$HYSTERIA_INSTALL_PATH"; then _log_warning "重应用setcap失败。"; fi; fi; _control_service "start"; else _log_error "替换失败。"; rm -f "$TMP_HY_DOWNLOAD"; _log_info "尝试重启旧服务..."; _control_service "start"; return 1; fi
 }
 
-_update_hy_script() { _log_info "尝试更新'${SCRIPT_COMMAND_NAME}'管理脚本..."; _setup_hy_command; }
+_update_hy_script() { _log_info "尝试更新'${SCRIPT_COMMAND_NAME}'管理脚本本身..."; _setup_hy_command; }
 _do_update() { _update_hysteria_binary; echo "---"; _update_hy_script; _log_success "更新过程完成。"; }
 
 _show_menu() {
-    # ... (Menu content as in previous version, ensure 'update' command is listed) ...
     echo ""; _log_info "Hysteria 管理面板 (${SCRIPT_COMMAND_NAME} v$SCRIPT_VERSION - $SCRIPT_DATE)"
     echo "--------------------------------------------"; echo " 服务管理:";
     echo "   start         - 启动 Hysteria 服务"; echo "   stop          - 停止 Hysteria 服务"; echo "   restart       - 重启 Hysteria 服务"; echo "   status        - 查看 Hysteria 服务状态"; echo "   enable        - 设置 Hysteria 服务开机自启"; echo "   disable       - 禁止 Hysteria 服务开机自启"
     echo " 配置与信息:"; echo "   config        - 显示当前配置摘要"; echo "   config_edit   - (高级) 手动编辑配置文件 (\$EDITOR)"; echo "   config_change - 交互式更改部分配置 (端口, 密码, 伪装URL)"; echo "   info          - 显示当前 Hysteria 订阅链接"; echo "   qrcode        - 显示订阅链接的二维码 (需 qrencode)"
     echo " 日志查看:"; echo "   logs          - 查看 Hysteria 输出日志 ($LOG_FILE_OUT)"; echo "   logs_err      - 查看 Hysteria 错误日志 ($LOG_FILE_ERR)"
     _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then echo "   logs_sys      - 查看 systemd 服务日志 (journalctl)"; fi
-    echo " 安装与更新:"; echo "   install       - 安装或重新安装 Hysteria"; echo "   update        - 更新 Hysteria 程序 和 '${SCRIPT_COMMAND_NAME}' 脚本" # Added Update
-    echo " 卸载:"; echo "   uninstall     - 卸载 Hysteria (及可选卸载'${SCRIPT_COMMAND_NAME}'和'qrencode')" # Updated Uninstall description
+    echo " 安装与更新:"; echo "   install       - 安装或重新安装 Hysteria (会提示覆盖)"; echo "   update        - 更新 Hysteria 程序 和 '${SCRIPT_COMMAND_NAME}' 脚本"
+    echo " 卸载:"; echo "   uninstall     - 卸载 Hysteria (及可选卸载'${SCRIPT_COMMAND_NAME}'和'qrencode')"
     echo " 其他:"; echo "   version       - 显示此脚本和 Hysteria 版本"; echo "   help          - 显示此帮助菜单"
     echo "--------------------------------------------"; echo "用法: sudo ${SCRIPT_COMMAND_NAME} <命令>"; echo "例如: sudo ${SCRIPT_COMMAND_NAME} start"; echo "      sudo ${SCRIPT_COMMAND_NAME} update"; echo ""
     _log_info "此脚本在执行 'install' 时会尝试自动安装为 /usr/local/bin/${SCRIPT_COMMAND_NAME} 命令."
@@ -305,7 +314,7 @@ ACTION="$1"
 case "$ACTION" in
     install)         _do_install ;;
     uninstall)       _do_uninstall ;;
-    update)          _do_update ;; # Added update action
+    update)          _do_update ;;
     start)           _control_service "start" ;;
     stop)            _control_service "stop" ;;
     restart)         _control_service "restart" ;;
