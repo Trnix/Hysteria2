@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.4.1" # Incremented for version display/update logic fixes
+SCRIPT_VERSION="1.4.2" # Incremented for version display/update logic fixes
 SCRIPT_DATE="2025-05-08" 
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -324,20 +324,26 @@ _change_config_interactive() {
 }
 
 _show_info_link() {
-    # ... (Function remains the same as previous version, using _get_link_params_from_config) ...
     _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; return 1; fi
     if ! _get_link_params_from_config; then _log_error "无法从当前配置生成订阅链接信息。"; return 1; fi 
     SUBSCRIPTION_LINK="hysteria2://${HY_PASSWORD}@${HY_LINK_ADDRESS}:${HY_PORT}/?sni=${HY_LINK_SNI}&alpn=h3&insecure=${HY_LINK_INSECURE}#Hysteria-${HY_SNI_VALUE}"
-    echo ""; _log_info "Hysteria V2 订阅链接 (根据当前配置生成):"; echo -e "${GREEN}${SUBSCRIPTION_LINK}${NC}"; echo ""
+    echo ""; _log_info "Hysteria2 订阅链接 (根据当前配置生成):"
+    echo -e "${GREEN}${SUBSCRIPTION_LINK}${NC}"; echo ""
 }
 
 _show_qrcode() {
-    # ... (Function remains the same as previous version, using _get_link_params_from_config) ...
-     _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; return 1; fi
+    _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; return 1; fi
     if ! _get_link_params_from_config; then _log_error "无法从当前配置生成二维码信息。"; return 1; fi 
     SUBSCRIPTION_LINK="hysteria2://${HY_PASSWORD}@${HY_LINK_ADDRESS}:${HY_PORT}/?sni=${HY_LINK_SNI}&alpn=h3&insecure=${HY_LINK_INSECURE}#Hysteria-${HY_SNI_VALUE}"
-    if command -v qrencode &>/dev/null; then _log_info "Hysteria V2 订阅链接二维码:"; qrencode -t ANSIUTF8 "$SUBSCRIPTION_LINK";
-    else _log_error "'qrencode' 命令未找到。"; _log_info "请先安装 qrencode: sudo $PKG_INSTALL_CMD qrencode"; _log_info "或手动复制订阅链接："; echo -e "${GREEN}${SUBSCRIPTION_LINK}${NC}"; fi
+    if command -v qrencode &>/dev/null; then 
+        _log_info "Hysteria2 订阅链接二维码:"
+        qrencode -t ANSIUTF8 "$SUBSCRIPTION_LINK"
+    else 
+        _log_error "'qrencode' 命令未找到。"
+        _log_info "请先安装 qrencode: sudo $PKG_INSTALL_CMD qrencode"
+        _log_info "或手动复制订阅链接："
+        echo -e "${GREEN}${SUBSCRIPTION_LINK}${NC}"
+    fi
 }
 
 _update_hysteria_binary() {
@@ -402,7 +408,7 @@ case "$ACTION" in
     qrcode|qrc)      _show_qrcode ;;
     logs)            if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [ ! -f "$LOG_FILE_OUT" ]; then _log_error "日志文件 $LOG_FILE_OUT 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 ($LOG_FILE_OUT)。"; tail -f "$LOG_FILE_OUT" ;;
     logs_err)        if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [ ! -f "$LOG_FILE_ERR" ]; then _log_error "日志文件 $LOG_FILE_ERR 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 ($LOG_FILE_ERR)。"; tail -f "$LOG_FILE_ERR" ;;
-    logs_sys)        _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "按 Q 退出 (journalctl)。"; journalctl -u "$CURRENT_HYSTERIA_SERVICE_NAME" -f --no-pager; else _log_error "此命令仅适用于 systemd 系统。"; fi ;;
+    logs_sys)        _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "按 CTRL+C 退出 (journalctl)。"; journalctl -u "$CURRENT_HYSTERIA_SERVICE_NAME" -f --no-pager; else _log_error "此命令仅适用于 systemd 系统。"; fi ;;
     version)         
         echo "$SCRIPT_COMMAND_NAME 管理脚本 v$SCRIPT_VERSION ($SCRIPT_DATE)"; echo "脚本文件: $SCRIPT_FILE_BASENAME"
         if _is_hysteria_installed && command -v "$HYSTERIA_INSTALL_PATH" &>/dev/null; then 
