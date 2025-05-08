@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.3.5" # Incremented for SNI parsing fix
+SCRIPT_VERSION="1.3.6" # Incremented for SNI parsing fix
 SCRIPT_DATE="2025-05-08" 
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -60,35 +60,30 @@ _setup_hy_command() {
 _get_link_params_from_config() {
     # Parses current config for link generation parameters
     unset HY_PASSWORD HY_LINK_ADDRESS HY_PORT HY_LINK_SNI HY_LINK_INSECURE HY_SNI_VALUE DOMAIN_FROM_CONFIG CERT_PATH_FROM_CONFIG KEY_PATH_FROM_CONFIG
-    
+
     if [ ! -f "$HYSTERIA_CONFIG_FILE" ]; then _log_error "配置文件 $HYSTERIA_CONFIG_FILE 未找到。"; return 1; fi
 
     _log_info "正从 $HYSTERIA_CONFIG_FILE 解析配置以生成链接..."
 
+    # Parse Port
     HY_PORT=$(grep -E '^\s*listen:\s*:([0-9]+)' "$HYSTERIA_CONFIG_FILE" | sed -E 's/^\s*listen:\s*://' || echo "")
-    HY_PASSWORD=$(grep '^\s*auth:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*password: \([^ ,}]*\).*/\1/p' || echo "")
+    echo "DEBUG PARSING: HY_PORT = [$HY_PORT]" >&2 # Added Debug
+
+    # Parse Password (Improved sed attempt 2)
+    # Looks for password: followed by optional space, then captures non-space/non-brace characters
+    HY_PASSWORD=$(grep '^\s*auth:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*password:[[:space:]]*\([^[:space:]}]*\).*/\1/p' || echo "")
+    echo "DEBUG PARSING: HY_PASSWORD (len=${#HY_PASSWORD}) = [$(echo "$HY_PASSWORD" | head -c 5)...]" >&2 # Added Debug (show first 5 chars)
+
 
     if grep -q '^\s*acme:' "$HYSTERIA_CONFIG_FILE"; then
         _log_info "检测到 ACME 配置。"
-        
-        # --- 使用 grep 和 sed 解析 ACME 域名 ---
-        # 1. 找到 domains: 那一行，并打印它后面的一行 (-A 1)
-        # 2. 在这后面的一行中，找到以 '-' 开头的行
-        # 3. 使用 sed 删除行首的 '- ' 和所有前后空格/引号/注释
         DOMAIN_FROM_CONFIG=$(grep -A 1 '^\s*domains:' "$HYSTERIA_CONFIG_FILE" | grep '^\s*-\s*' | sed -e 's/^\s*-\s*//' -e 's/#.*//' -e 's/[ \t]*$//' -e 's/^["'\'']//' -e 's/["'\'']$//')
-        # --- 结束 grep/sed 解析 ---
-
-        echo "DEBUG: grep/sed 解析后的域名 = [$DOMAIN_FROM_CONFIG]" >&2 # 保留调试输出
-
-        if [ -z "$DOMAIN_FROM_CONFIG" ]; then 
-            _log_error "无法从配置解析ACME域名。" 
-            return 1
-        fi
+        # echo "DEBUG: grep/sed 解析后的域名 = [$DOMAIN_FROM_CONFIG]" >&2 # Domain parsing seems ok now
+        if [ -z "$DOMAIN_FROM_CONFIG" ]; then _log_error "无法从配置解析ACME域名。"; return 1; fi
         _log_info "ACME 域名: $DOMAIN_FROM_CONFIG"
         HY_LINK_SNI="$DOMAIN_FROM_CONFIG"; HY_LINK_ADDRESS="$DOMAIN_FROM_CONFIG"; HY_LINK_INSECURE="0"; HY_SNI_VALUE="$DOMAIN_FROM_CONFIG"
     elif grep -q '^\s*tls:' "$HYSTERIA_CONFIG_FILE"; then
-        # ... (自定义 TLS 的解析逻辑保持不变) ...
-         _log_info "检测到自定义 TLS 配置。"
+        _log_info "检测到自定义 TLS 配置。"
         CERT_PATH_FROM_CONFIG=$(grep '^\s*tls:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*cert: \([^, }]*\).*/\1/p' || echo "")
         if [ -z "$CERT_PATH_FROM_CONFIG" ]; then _log_error "无法从配置解析证书路径。"; return 1; fi
         if [[ "$CERT_PATH_FROM_CONFIG" != /* ]]; then CERT_PATH_FROM_CONFIG="${HYSTERIA_CONFIG_DIR}/${CERT_PATH_FROM_CONFIG}"; fi
@@ -101,7 +96,21 @@ _get_link_params_from_config() {
         HY_LINK_SNI="$HY_SNI_VALUE"; HY_LINK_ADDRESS=$(_get_server_address); if [ $? -ne 0 ] || [ -z "$HY_LINK_ADDRESS" ]; then _log_error "获取公网地址失败。"; return 1; fi; HY_LINK_INSECURE="1"
     else _log_error "无法确定TLS模式。"; return 1; fi
 
-    if [ -z "$HY_PORT" ] || [ -z "$HY_PASSWORD" ] || [ -z "$HY_LINK_ADDRESS" ] || [ -z "$HY_LINK_SNI" ] || [ -z "$HY_LINK_INSECURE" ] || [ -z "$HY_SNI_VALUE" ]; then _log_error "未能解析生成链接所需的所有参数。"; return 1; fi
+    # --- Final Check Debug Line ---
+    echo "DEBUG_FINAL_CHECK: PORT='${HY_PORT}', PWD_len='${#HY_PASSWORD}', ADDR='${HY_LINK_ADDRESS}', SNI='${HY_LINK_SNI}', INSECURE='${HY_LINK_INSECURE}', SNI_VAL='${HY_SNI_VALUE}'" >&2
+    # --- End Debug Line ---
+
+    if [ -z "$HY_PORT" ] || [ -z "$HY_PASSWORD" ] || [ -z "$HY_LINK_ADDRESS" ] || [ -z "$HY_LINK_SNI" ] || [ -z "$HY_LINK_INSECURE" ] || [ -z "$HY_SNI_VALUE" ]; then
+        _log_error "未能从配置文件解析生成链接所需的所有参数。"
+        # Add more specific checks
+        if [ -z "$HY_PORT" ]; then _log_error "  - 端口 (Port) 解析失败。"; fi
+        if [ -z "$HY_PASSWORD" ]; then _log_error "  - 密码 (Password) 解析失败。"; fi
+        if [ -z "$HY_LINK_ADDRESS" ]; then _log_error "  - 链接地址 (Link Address) 解析/获取失败。"; fi
+        if [ -z "$HY_LINK_SNI" ]; then _log_error "  - 链接SNI (Link SNI) 解析失败。"; fi
+        if [ -z "$HY_LINK_INSECURE" ]; then _log_error "  - Insecure 标志获取失败。"; fi
+        if [ -z "$HY_SNI_VALUE" ]; then _log_error "  - SNI值 (SNI Value) 解析/获取失败。"; fi
+        return 1
+    fi
     _log_info "成功解析链接参数。"; return 0
 }
 
