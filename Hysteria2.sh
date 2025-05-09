@@ -49,16 +49,15 @@ _is_hysteria_installed() { _detect_os; if [ -f "$HYSTERIA_INSTALL_PATH" ] && [ -
 
 _install_dependencies() { 
     _log_info "更新包列表(${DISTRO_FAMILY})..."
-    
+    local alpine_repo_modified_by_script=false # Flag to track if Alpine repo file was touched by this script run
+
     if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
         _log_info "Alpine: 正在确保 community repository 已启用..."
         local repo_file="/etc/apk/repositories"
-        # Robust patterns for community repo lines
-        local community_repo_pattern_uncommented="^[^#][[:space:]]*http[s]?:\/\/.*\/alpine\/v[0-9.]+\/community"
-        local community_repo_pattern_commented="^#[[:space:]]*http[s]?:\/\/.*\/alpine\/v[0-9.]+\/community"
-        local alpine_repo_modified_by_script=false
-
-        if ! grep -q -E "$community_repo_pattern_uncommented" "$repo_file"; then
+        # Regex to match an active (uncommented) community repo line for any Alpine version
+        local community_repo_active_pattern="^[^#][[:space:]]*http[s]?:\/\/.*\/alpine\/v[0-9.]+\/community"
+        
+        if ! grep -q -E "$community_repo_active_pattern" "$repo_file"; then
             _log_info "Alpine community repository 未启用或被注释，尝试处理..."
             if [ ! -w "$repo_file" ]; then
                 _log_error "无法写入 Alpine 仓库文件 $repo_file。请确保脚本以 root 权限运行，并且文件可写。"
@@ -67,38 +66,35 @@ _install_dependencies() {
                 # Backup before modifying
                 cp "$repo_file" "${repo_file}.bak_hy_$(date +%s)" 
                 
-                if grep -q -E "$community_repo_pattern_commented" "$repo_file"; then
-                    _log_info "找到被注释的 community repository 行，尝试取消注释..."
-                    # Uncomment all lines matching the commented pattern
-                    sed -i -E "s|^#[[:space:]]*([[:print:]]*\/alpine\/v[0-9.]+\/community)|\1|g" "$repo_file"
-                    if grep -q -E "$community_repo_pattern_uncommented" "$repo_file"; then
-                        _log_success "已取消注释 community repository。"
-                        alpine_repo_modified_by_script=true
-                    else
-                        _log_warning "尝试取消注释失败 (可能 sed 命令未生效或格式不匹配)。"
-                    fi
-                fi
-
-                # If still not enabled (e.g., line didn't exist or uncommenting failed), try adding it
-                if ! grep -q -E "$community_repo_pattern_uncommented" "$repo_file"; then
+                # Try to uncomment any line that looks like a community repo for *any* version first
+                # This is a broad uncomment attempt. It looks for lines starting with '#' then a URL containing '/alpine/vX.Y/community'
+                _log_info "尝试取消注释所有匹配的 community repository 行..."
+                sed -i -E 's/^#[[:space:]]*([[:print:]]*\/alpine\/v[0-9.]+\/community)/\1/g' "$repo_file"
+                
+                if grep -q -E "$community_repo_active_pattern" "$repo_file"; then
+                    _log_success "已取消注释一个或多个 community repository。"
+                    alpine_repo_modified_by_script=true
+                else
+                    _log_warning "未找到可取消注释的 community repository 行，或取消注释失败。"
+                    # If still not active, try adding a default one based on detected version
                     if [ -f /etc/os-release ]; then
-                        . /etc/os-release 
-                        local alpine_version_major_minor=$(echo "$VERSION_ID" | cut -d. -f1-2) 
+                        . /etc/os-release # Source /etc/os-release to get VERSION_ID (e.g., 3.19.0)
+                        local alpine_version_major_minor=$(echo "$VERSION_ID" | cut -d. -f1-2) # e.g., 3.19
                         if [ -n "$alpine_version_major_minor" ]; then
-                            local community_line="http://dl-cdn.alpinelinux.org/alpine/v${alpine_version_major_minor}/community"
-                            _log_info "尝试添加 community repository: $community_line"
-                            if ! grep -q -F "$community_line" "$repo_file"; then 
-                                echo "$community_line" >> "$repo_file"
-                                if grep -q -F "$community_line" "$repo_file"; then
+                            local community_line_to_add="http://dl-cdn.alpinelinux.org/alpine/v${alpine_version_major_minor}/community"
+                            _log_info "尝试添加默认 community repository: $community_line_to_add"
+                            if ! grep -q -F "$community_line_to_add" "$repo_file"; then # Avoid duplicates
+                                echo "$community_line_to_add" >> "$repo_file"
+                                if grep -q -F "$community_line_to_add" "$repo_file"; then
                                     _log_success "已添加 community repository。"
                                     alpine_repo_modified_by_script=true
                                 else
                                     _log_error "添加 community repository 后检查失败。"
                                 fi
                             else
-                                _log_info "Community repository line '$community_line' 已存在。"
-                                # If it exists but wasn't matched by uncommented pattern, it might be commented differently
-                                # Or it's already there and active, grep -q failed before.
+                                _log_info "默认 community repository line ('$community_line_to_add') 已存在 (可能仍被注释或格式不同)。"
+                                # If it exists but wasn't matched by active pattern, it's likely still commented.
+                                # The sed above should have handled it. If not, something is unusual.
                             fi
                         else
                             _log_warning "无法从 /etc/os-release 获取 Alpine 版本号，无法自动添加 community repository。"
@@ -107,10 +103,11 @@ _install_dependencies() {
                          _log_warning "/etc/os-release 文件未找到，无法自动添加 community repository。"
                     fi
                 fi
+                # rm -f "${repo_file}.bak_hy_$(date +%s)" # Clean up backup
             fi # End write check
             
             if $alpine_repo_modified_by_script; then
-                _log_info "Alpine 仓库配置已修改，强制执行 apk update..."
+                _log_info "Alpine 仓库配置已修改，强制执行 apk update (显示输出)..."
                 if ! apk update; then # Show output for this critical update
                      _log_error "修改仓库后执行 apk update 失败。qrencode 等包可能无法安装。"
                 else
@@ -122,9 +119,9 @@ _install_dependencies() {
         else
             _log_info "Alpine community repository 已启用。"
         fi
-        # Always run apk update once before installing packages on Alpine
-        _log_info "为 Alpine 执行 apk update (确保最新列表)..."
-        if ! apk update; then # Show output
+        # Always run apk update once more before installing packages on Alpine, show output
+        _log_info "为 Alpine 执行最终 apk update (确保最新列表，显示输出)..."
+        if ! apk update; then 
              _log_warning "Alpine apk update 失败 (可能是网络问题或已是最新)。"; 
         fi
 
