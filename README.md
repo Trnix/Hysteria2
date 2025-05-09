@@ -76,7 +76,7 @@ hysteria2://<password>@<server_address>:<port>/?sni=<sni>&alpn=h3&insecure=<inse
 - `<sni>`：TLS 握手用域名（通常是伪装域名）
 - `<insecure>`：是否跳过证书验证（1 = 是，0 = 否）
 
-> 自签名证书或自定义证书时，请确保 `insecure=1`  ACME HTTP 验证确保80端口可用并指向本机ip
+## 自签名证书或自定义证书时，请确保 `insecure=1`  ACME HTTP 验证确保80端口可用并指向本机ip
 
 ---
 
