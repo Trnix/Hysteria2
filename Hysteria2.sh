@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.4" # Fixed OpenRC checkpath arguments in generated service script
+SCRIPT_VERSION="1.5.5" # Added Hysteria binary version check in _do_install to avoid re-download
 SCRIPT_DATE="2025-05-09"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -301,9 +301,61 @@ _do_install() {
     _read_from_tty PASSWORD_INPUT "Hysteria密码(回车随机): " "random"; if [ -z "$PASSWORD_INPUT" ] || [ "$PASSWORD_INPUT" == "random" ]; then PASSWORD=$(_generate_uuid); _log_info "使用随机密码: $PASSWORD"; else PASSWORD="$PASSWORD_INPUT"; fi
     _read_from_tty MASQUERADE_URL_INPUT "伪装URL(默认 $DEFAULT_MASQUERADE_URL): "; MASQUERADE_URL=${MASQUERADE_URL_INPUT:-$DEFAULT_MASQUERADE_URL}
     SERVER_PUBLIC_ADDRESS=$(_get_server_address); mkdir -p "$HYSTERIA_CONFIG_DIR"
-    _log_info "下载Hysteria..."; ARCH=$(uname -m); case ${ARCH} in x86_64) HYSTERIA_ARCH="amd64";; aarch64) HYSTERIA_ARCH="arm64";; armv7l) HYSTERIA_ARCH="arm";; *) _log_error "不支持架构: ${ARCH}"; exit 1;; esac
-    if ! wget -qO "$HYSTERIA_INSTALL_PATH" "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HYSTERIA_ARCH}"; then _log_warning "GitHub下载失败,尝试旧地址..."; if ! wget -qO "$HYSTERIA_INSTALL_PATH" "https://download.hysteria.network/app/latest/hysteria-linux-${HYSTERIA_ARCH}"; then _log_error "下载Hysteria失败!"; exit 1; fi; fi
-    chmod +x "$HYSTERIA_INSTALL_PATH"; _log_success "Hysteria下载设置完成: $HYSTERIA_INSTALL_PATH"
+
+    # --- Hysteria Binary Download/Check ---
+    local perform_hysteria_download=true
+    if [ -f "$HYSTERIA_INSTALL_PATH" ] && command -v "$HYSTERIA_INSTALL_PATH" &>/dev/null; then
+        _log_info "检测到已安装的 Hysteria 程序，正在检查版本..."
+        VERSION_OUTPUT=$("$HYSTERIA_INSTALL_PATH" version 2>/dev/null)
+        CURRENT_HY_VER=$(echo "$VERSION_OUTPUT" | grep '^Version:' | awk '{print $2}')
+
+        if [ -n "$CURRENT_HY_VER" ] && [ "$CURRENT_HY_VER" != "unknown" ]; then
+            _log_info "当前已安装 Hysteria 版本: $CURRENT_HY_VER. 正在获取最新版本..."
+            LATEST_VER_TAG=$(curl -s --connect-timeout 5 "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+            if [ -n "$LATEST_VER_TAG" ]; then
+                LATEST_HY_VER_CLEAN=$(echo "$LATEST_VER_TAG" | sed -e 's#^app/##' -e 's#^v##')
+                _log_info "GitHub 最新 Hysteria 版本 Tag: $LATEST_VER_TAG (解析为: $LATEST_HY_VER_CLEAN)"
+                if [[ "$CURRENT_HY_VER" == "$LATEST_HY_VER_CLEAN" ]]; then
+                    _log_success "已安装的 Hysteria 程序 (v$CURRENT_HY_VER) 已是最新版本。将跳过下载。"
+                    perform_hysteria_download=false
+                else
+                    _log_info "检测到 Hysteria 程序新版本 (最新: v$LATEST_HY_VER_CLEAN, 当前: v$CURRENT_HY_VER)。准备下载更新。"
+                fi
+            else
+                _log_warning "无法从 GitHub API 获取最新 Hysteria 版本号。将继续尝试下载以确保最新。"
+            fi
+        else
+            _log_warning "无法获取当前已安装 Hysteria 的版本号。将继续尝试下载。"
+        fi
+    else
+        _log_info "Hysteria 程序未安装或无法执行。准备下载。"
+    fi
+
+    if $perform_hysteria_download; then
+        _log_info "下载Hysteria..."; ARCH=$(uname -m); case ${ARCH} in x86_64) HYSTERIA_ARCH="amd64";; aarch64) HYSTERIA_ARCH="arm64";; armv7l) HYSTERIA_ARCH="arm";; *) _log_error "不支持架构: ${ARCH}"; exit 1;; esac
+        if ! wget -qO "$HYSTERIA_INSTALL_PATH" "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HYSTERIA_ARCH}"; then
+            _log_warning "GitHub下载失败,尝试旧地址...";
+            if ! wget -qO "$HYSTERIA_INSTALL_PATH" "https://download.hysteria.network/app/latest/hysteria-linux-${HYSTERIA_ARCH}"; then
+                _log_error "下载Hysteria失败!"; exit 1;
+            fi;
+        fi
+        _log_success "Hysteria 程序下载成功。"
+    fi
+
+    if [ -f "$HYSTERIA_INSTALL_PATH" ]; then
+        chmod +x "$HYSTERIA_INSTALL_PATH"
+        _log_success "Hysteria 程序准备就绪: $HYSTERIA_INSTALL_PATH"
+    else
+        if $perform_hysteria_download; then 
+            _log_error "Hysteria 程序文件在尝试下载后未找到于 $HYSTERIA_INSTALL_PATH。安装中止。"
+            exit 1
+        else
+             _log_error "Hysteria 程序未安装 (${HYSTERIA_INSTALL_PATH} 不存在) 且下载被跳过。这是一个意外情况。"
+             exit 1
+        fi
+    fi
+    # --- End Hysteria Binary Download/Check ---
+
     if [ "$TLS_TYPE" -eq 2 ]; then _log_info "设置cap_net_bind_service权限(ACME)..."; if ! command -v setcap &>/dev/null; then _log_warning "setcap未找到,尝试安装$SETCAP_DEPENDENCY_PKG..."; if ! $PKG_INSTALL_CMD "$SETCAP_DEPENDENCY_PKG"; then _log_error "安装$SETCAP_DEPENDENCY_PKG失败."; else _log_success "$SETCAP_DEPENDENCY_PKG安装成功."; fi; fi; if command -v setcap &>/dev/null; then if ! setcap 'cap_net_bind_service=+ep' "$HYSTERIA_INSTALL_PATH"; then _log_error "setcap失败."; else _log_success "setcap成功."; fi; else _log_error "setcap仍不可用."; fi; fi
     _log_info "生成配置文件 $HYSTERIA_CONFIG_FILE..."; cat > "$HYSTERIA_CONFIG_FILE" << EOF
 # Hysteria 2 服务器配置文件
@@ -348,7 +400,7 @@ Restart=on-failure; RestartSec=10; StandardOutput=append:$LOG_FILE_OUT; Standard
 [Install]
 WantedBy=multi-user.target
 EOF
-        chmod 644 "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME"; $SERVICE_CMD daemon-reload # systemctl daemon-reload
+        chmod 644 "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME"; systemctl daemon-reload
     elif [ "$INIT_SYSTEM" == "openrc" ]; then _log_info "创建OpenRC服务..."; cat > "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME" << EOF
 #!/sbin/openrc-run
 name="$HYSTERIA_SERVICE_NAME_OPENRC"
@@ -365,8 +417,8 @@ depend() {
 }
 
 start_pre() {
-  checkpath -f "\$output_log" -m 0644 # Removed owner argument
-  checkpath -f "\$error_log" -m 0644 # Removed owner argument
+  checkpath -f "\$output_log" -m 0644
+  checkpath -f "\$error_log" -m 0644
 }
 
 start() {
@@ -402,7 +454,7 @@ _do_uninstall() {
     if [[ "$confirm_uninstall" != "y" && "$confirm_uninstall" != "Y" ]]; then _log_info "卸载取消。"; exit 0; fi
 
     _log_info "停止Hysteria服务..."; _control_service "stop" >/dev/null 2>&1
-    if [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "禁用systemd服务..."; $SERVICE_CMD disable "$CURRENT_HYSTERIA_SERVICE_NAME" >/dev/null 2>&1; _log_info "移除systemd服务文件..."; rm -f "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME"; find /etc/systemd/system/ -name "$CURRENT_HYSTERIA_SERVICE_NAME" -delete; $SERVICE_CMD daemon-reload; $SERVICE_CMD reset-failed "$CURRENT_HYSTERIA_SERVICE_NAME" >/dev/null 2>&1 || true
+    if [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "禁用systemd服务..."; $SERVICE_CMD disable "$CURRENT_HYSTERIA_SERVICE_NAME" >/dev/null 2>&1; _log_info "移除systemd服务文件..."; rm -f "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME"; find /etc/systemd/system/ -name "$CURRENT_HYSTERIA_SERVICE_NAME" -delete; systemctl daemon-reload; systemctl reset-failed "$CURRENT_HYSTERIA_SERVICE_NAME" >/dev/null 2>&1 || true
     elif [[ "$INIT_SYSTEM" == "openrc" ]]; then _log_info "移除OpenRC服务..."; rc-update del "$CURRENT_HYSTERIA_SERVICE_NAME" default >/dev/null 2>&1; _log_info "移除OpenRC脚本..."; rm -f "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME"; fi
     _log_info "移除Hysteria二进制: $HYSTERIA_INSTALL_PATH"; rm -f "$HYSTERIA_INSTALL_PATH"
     _log_info "移除Hysteria配置: $HYSTERIA_CONFIG_DIR"; rm -rf "$HYSTERIA_CONFIG_DIR"
@@ -434,9 +486,8 @@ _do_uninstall() {
 
 _control_service() {
     _detect_os; local action="$1"
-    # Allow enable/disable to be called even if service file not fully there yet (during install)
-    if ! _is_hysteria_installed && ! ( [[ "$action" == "enable" || "$action" == "disable" ]] && [ -f "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME" -o -f "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME" ] ) ; then
-        if _is_hysteria_installed; then : # Double check, proceed if actually installed
+    if ! _is_hysteria_installed && ! ( [[ "$action" == "enable" || "$action" == "disable" ]] && { [ -f "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME" ] || [ -f "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME" ]; } ) ; then
+        if _is_hysteria_installed; then :
         else
             _log_error "Hysteria未安装或服务未配置。请用'${SCRIPT_COMMAND_NAME} install'安装。 (Action: $action)"
             return 1
@@ -457,26 +508,34 @@ _control_service() {
     case "$action" in
         start|stop|restart)
             _ensure_root; _log_info "执行: $cmd_to_run"
-            if ! $constructed_cmd_success; then return 1; fi # Should be caught by above else
+            if ! $constructed_cmd_success; then return 1; fi
 
-            # For OpenRC, stop might return non-zero if already stopped. This is fine.
-            # For restart, if stop fails because already stopped, start should still proceed.
             local cmd_output
             local cmd_exit_code
             
-            # Capture output and exit code without printing to stdout/stderr immediately
             cmd_output=$(eval "$cmd_to_run" 2>&1)
             cmd_exit_code=$?
-
-            if [[ "$INIT_SYSTEM" == "openrc" && ("$action" == "stop" || "$action" == "restart") && $(echo "$cmd_output" | grep -c "stop" | grep -c "failed") -gt 0 && $(echo "$cmd_output" | grep -c "already stopped") -gt 0 ]]; then
-                _log_warning "服务 '$CURRENT_HYSTERIA_SERVICE_NAME' 在尝试停止时可能已停止。继续操作..."
-                if [[ "$action" == "restart" ]]; then # If it was a restart, we still need to start it
-                    local start_cmd_openrc="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME start"
-                    _log_info "尝试启动 (作为 restart 的一部分): $start_cmd_openrc"
-                    cmd_output=$(eval "$start_cmd_openrc" 2>&1)
-                    cmd_exit_code=$?
-                else # For stop action, if it was already stopped, consider it a success for "stop"
-                    cmd_exit_code=0 
+            
+            # Handle OpenRC's "already stopped" for stop/restart actions
+            if [[ "$INIT_SYSTEM" == "openrc" && ("$action" == "stop" || "$action" == "restart") ]]; then
+                if echo "$cmd_output" | grep -q "service .* already stopped"; then
+                    _log_warning "服务 '$CURRENT_HYSTERIA_SERVICE_NAME' 在尝试停止时已停止。"
+                    if [[ "$action" == "stop" ]]; then # If action was stop, and it's already stopped, it's a success for stop
+                        cmd_exit_code=0
+                    fi
+                fi
+                # If it was a restart and stop part reported "already stopped", we must ensure start is attempted
+                if [[ "$action" == "restart" && $cmd_exit_code -ne 0 && $(echo "$cmd_output" | grep -q "service .* already stopped") ]]; then
+                     _log_info "由于服务已停止，现在尝试启动 (作为 restart 的一部分)..."
+                     local start_cmd_openrc="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME start"
+                     cmd_output=$(eval "$start_cmd_openrc" 2>&1)
+                     cmd_exit_code=$?
+                elif [[ "$action" == "restart" && $cmd_exit_code -eq 0 && $(echo "$cmd_output" | grep -q "Stopping") && ! $(echo "$cmd_output" | grep -q "Starting") ]]; then
+                    # If stop was successful but start didn't happen (some OpenRC setups might do this if `restart` is not native)
+                     _log_info "服务已停止，现在尝试启动 (作为 restart 的一部分)..."
+                     local start_cmd_openrc="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME start"
+                     cmd_output=$(eval "$start_cmd_openrc" 2>&1)
+                     cmd_exit_code=$?
                 fi
             fi
             
@@ -491,12 +550,16 @@ _control_service() {
                         status_cmd_to_run="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME status"
                     fi
                     if [ -n "$status_cmd_to_run" ]; then
-                        ($status_cmd_to_run 2>/dev/null | head -n 7) || $status_cmd_to_run
+                        # Capture status output to prevent script from exiting on non-zero status for display
+                        status_output=$($status_cmd_to_run 2>&1 | head -n 7) 
+                        echo "$status_output"
+                        # If the status command itself failed (e.g. service not found), $? would be non-zero
+                        # but we mostly care if it ran and what it showed.
                     fi
                 fi
             else
                 _log_error "操作'$action'失败。输出:"
-                echo "$cmd_output" # Print the captured output on failure
+                echo "$cmd_output" 
                 _log_warning "请检查日志:"
                 echo "  输出: tail -n 30 $LOG_FILE_OUT"
                 echo "  错误: tail -n 30 $LOG_FILE_ERR"
@@ -569,7 +632,7 @@ _show_info_and_qrcode() {
 _update_hysteria_binary() {
     _ensure_root; _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。无法更新。"; return 1; fi
     _log_info "检查 Hysteria 程序更新..."; VERSION_OUTPUT=$("$HYSTERIA_INSTALL_PATH" version 2>/dev/null); CURRENT_VER=$(echo "$VERSION_OUTPUT" | grep '^Version:' | awk '{print $2}'); if [ -z "$CURRENT_VER" ]; then _log_warning "无法获取当前版本。尝试下载最新。"; CURRENT_VER="unknown"; else _log_info "当前版本: $CURRENT_VER"; fi
-    _log_info "获取最新版本号..."; LATEST_VER_TAG=$(curl -s --connect-timeout 5 "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'); if [ -z "$LATEST_VER_TAG" ]; then _log_warning "无法从 GitHub API 获取版本号。尝试下载'latest'。"; LATEST_VER_CLEAN="latest"; else LATEST_VER_CLEAN=$(echo "$LATEST_VER_TAG" | sed 's#^app/##'); _log_info "最新版本 Tag: $LATEST_VER_TAG (比较版本: $LATEST_VER_CLEAN)"; if [[ "$CURRENT_VER" == "$LATEST_VER_CLEAN" && "$CURRENT_VER" != "unknown" ]]; then _log_success "当前已是最新版本 ($CURRENT_VER)。"; return 0; fi; fi
+    _log_info "获取最新版本号..."; LATEST_VER_TAG=$(curl -s --connect-timeout 5 "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'); if [ -z "$LATEST_VER_TAG" ]; then _log_warning "无法从 GitHub API 获取版本号。尝试下载'latest'。"; LATEST_VER_CLEAN="latest"; else LATEST_VER_CLEAN=$(echo "$LATEST_VER_TAG" | sed -e 's#^app/##' -e 's#^v##'); _log_info "最新版本 Tag: $LATEST_VER_TAG (比较版本: $LATEST_VER_CLEAN)"; if [[ "$CURRENT_VER" == "$LATEST_VER_CLEAN" && "$CURRENT_VER" != "unknown" ]]; then _log_success "当前已是最新版本 ($CURRENT_VER)。"; return 0; fi; fi
     _log_info "下载 Hysteria (版本: ${LATEST_VER_CLEAN:-latest}) ..."; ARCH=$(uname -m); case ${ARCH} in x86_64) HYSTERIA_ARCH="amd64";; aarch64) HYSTERIA_ARCH="arm64";; armv7l) HYSTERIA_ARCH="arm";; *) _log_error "不支持架构: ${ARCH}"; return 1;; esac; TMP_HY_DOWNLOAD=$(mktemp); DOWNLOAD_URL="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HYSTERIA_ARCH}"; if ! wget -qO "$TMP_HY_DOWNLOAD" "$DOWNLOAD_URL"; then _log_error "下载失败! URL: $DOWNLOAD_URL"; rm -f "$TMP_HY_DOWNLOAD"; return 1; fi
     if ! file "$TMP_HY_DOWNLOAD" | grep -q "executable"; then _log_error "下载文件非可执行。"; rm -f "$TMP_HY_DOWNLOAD"; return 1; fi; chmod +x "$TMP_HY_DOWNLOAD"; DOWNLOADED_VER_OUTPUT=$("$TMP_HY_DOWNLOAD" version 2>/dev/null); DOWNLOADED_VER=$(echo "$DOWNLOADED_VER_OUTPUT" | grep '^Version:' | awk '{print $2}'); if [[ -n "$DOWNLOADED_VER" && "$DOWNLOADED_VER" == "$CURRENT_VER" && "$CURRENT_VER" != "unknown" ]]; then _log_info "下载版本($DOWNLOADED_VER)与当前相同。"; rm -f "$TMP_HY_DOWNLOAD"; return 0; elif [[ -n "$DOWNLOADED_VER" ]]; then _log_info "下载版本为: $DOWNLOADED_VER"; else _log_warning "无法获取下载文件版本号。"; fi
     _log_info "准备替换..."; _control_service "stop"; sleep 1; if mv "$TMP_HY_DOWNLOAD" "$HYSTERIA_INSTALL_PATH"; then _log_success "Hysteria已更新至$DOWNLOADED_VER(或latest)。"; if getcap "$HYSTERIA_INSTALL_PATH" 2>/dev/null | grep -q "cap_net_bind_service"; then _log_info "重应用setcap权限..."; if ! setcap 'cap_net_bind_service=+ep' "$HYSTERIA_INSTALL_PATH"; then _log_warning "重应用setcap失败。"; fi; fi; _control_service "start"; return 0; else _log_error "替换失败。"; rm -f "$TMP_HY_DOWNLOAD"; _log_info "尝试重启旧服务..."; _control_service "start"; return 1; fi
