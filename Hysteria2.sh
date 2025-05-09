@@ -49,74 +49,56 @@ _is_hysteria_installed() { _detect_os; if [ -f "$HYSTERIA_INSTALL_PATH" ] && [ -
 
 _install_dependencies() { 
     _log_info "更新包列表(${DISTRO_FAMILY})..."
-    local alpine_repo_modified=false # Flag to track if Alpine repo file was touched
-
+    
     if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
-        _log_info "检查 Alpine community repository..."
+        _log_info "Alpine: 正在确保 community repository 已启用..."
         local repo_file="/etc/apk/repositories"
-        # More robust patterns to match community repo lines, considering different Alpine base URLs
-        local community_repo_pattern_uncommented="^[^#].*\/alpine\/v[0-9.]+\/community"
-        local community_repo_pattern_commented="^#.*\/alpine\/v[0-9.]+\/community"
+        # Robust patterns for community repo lines
+        local community_repo_pattern_uncommented="^[^#][[:space:]]*http[s]?:\/\/.*\/alpine\/v[0-9.]+\/community"
+        local community_repo_pattern_commented="^#[[:space:]]*http[s]?:\/\/.*\/alpine\/v[0-9.]+\/community"
+        local alpine_repo_modified_by_script=false
 
         if ! grep -q -E "$community_repo_pattern_uncommented" "$repo_file"; then
-            _log_info "Alpine community repository 未启用或被注释，尝试启用..."
-            if [ ! -w "$repo_file" ]; then # Check if we can write to the file
+            _log_info "Alpine community repository 未启用或被注释，尝试处理..."
+            if [ ! -w "$repo_file" ]; then
                 _log_error "无法写入 Alpine 仓库文件 $repo_file。请确保脚本以 root 权限运行，并且文件可写。"
-                # No point in continuing if we can't write to repo file
+                # If we can't write to repo file, subsequent apk add will likely fail for community packages
             else
-                # Make a backup before modifying
+                # Backup before modifying
                 cp "$repo_file" "${repo_file}.bak_hy_$(date +%s)" 
                 
                 if grep -q -E "$community_repo_pattern_commented" "$repo_file"; then
                     _log_info "找到被注释的 community repository 行，尝试取消注释..."
-                    # Try to uncomment the first matching commented community line
-                    # This sed command looks for '#http.../vX.Y/community' and removes the leading '#'
-                    if sed -i -E "0,/^#([[:print:]]*\/alpine\/v[0-9.]+\/community)/s//\1/" "$repo_file"; then
-                         _log_success "已尝试取消注释 community repository。"
-                         alpine_repo_modified=true
+                    # Uncomment all lines matching the commented pattern
+                    sed -i -E "s|^#[[:space:]]*([[:print:]]*\/alpine\/v[0-9.]+\/community)|\1|g" "$repo_file"
+                    if grep -q -E "$community_repo_pattern_uncommented" "$repo_file"; then
+                        _log_success "已取消注释 community repository。"
+                        alpine_repo_modified_by_script=true
                     else
-                        _log_warning "使用 sed 取消注释 community repository 失败。"
+                        _log_warning "尝试取消注释失败 (可能 sed 命令未生效或格式不匹配)。"
                     fi
                 fi
 
                 # If still not enabled (e.g., line didn't exist or uncommenting failed), try adding it
                 if ! grep -q -E "$community_repo_pattern_uncommented" "$repo_file"; then
                     if [ -f /etc/os-release ]; then
-                        . /etc/os-release # Source /etc/os-release to get VERSION_ID (e.g., 3.18.0)
-                        local alpine_version_major_minor=$(echo "$VERSION_ID" | cut -d. -f1-2) # e.g., 3.18
+                        . /etc/os-release 
+                        local alpine_version_major_minor=$(echo "$VERSION_ID" | cut -d. -f1-2) 
                         if [ -n "$alpine_version_major_minor" ]; then
-                            # Common base URLs for Alpine repos
-                            local alpine_base_urls=(
-                                "http://dl-cdn.alpinelinux.org/alpine"
-                                "http://alpine.mirror.svc.点.com/alpine" # Example for a specific mirror, adjust if needed
-                                # Add other common mirror bases if necessary
-                            )
-                            local community_line_added=false
-                            for base_url in "${alpine_base_urls[@]}"; do
-                                local potential_community_line="${base_url}/v${alpine_version_major_minor}/community"
-                                # Check if a main repo for this base URL and version already exists (uncommented)
-                                if grep -q -E "^[^#].*${base_url}/v${alpine_version_major_minor}/main" "$repo_file"; then
-                                    _log_info "尝试基于主仓库添加 community repository: $potential_community_line"
-                                    # Avoid adding duplicate community lines
-                                    if ! grep -q -F "$potential_community_line" "$repo_file"; then
-                                        echo "$potential_community_line" >> "$repo_file"
-                                        if grep -q -F "$potential_community_line" "$repo_file"; then
-                                            _log_success "已添加 community repository: $potential_community_line"
-                                            alpine_repo_modified=true
-                                            community_line_added=true
-                                            break # Added successfully
-                                        else
-                                            _log_error "添加 community repository ($potential_community_line) 后检查失败。"
-                                        fi
-                                    else
-                                        _log_info "Community repository line '$potential_community_line' 已存在。"
-                                        community_line_added=true # Assume it's fine if it exists
-                                        break
-                                    fi
+                            local community_line="http://dl-cdn.alpinelinux.org/alpine/v${alpine_version_major_minor}/community"
+                            _log_info "尝试添加 community repository: $community_line"
+                            if ! grep -q -F "$community_line" "$repo_file"; then 
+                                echo "$community_line" >> "$repo_file"
+                                if grep -q -F "$community_line" "$repo_file"; then
+                                    _log_success "已添加 community repository。"
+                                    alpine_repo_modified_by_script=true
+                                else
+                                    _log_error "添加 community repository 后检查失败。"
                                 fi
-                            done
-                            if ! $community_line_added; then
-                                _log_warning "未能根据现有主仓库自动添加匹配的 community repository。"
+                            else
+                                _log_info "Community repository line '$community_line' 已存在。"
+                                # If it exists but wasn't matched by uncommented pattern, it might be commented differently
+                                # Or it's already there and active, grep -q failed before.
                             fi
                         else
                             _log_warning "无法从 /etc/os-release 获取 Alpine 版本号，无法自动添加 community repository。"
@@ -127,27 +109,28 @@ _install_dependencies() {
                 fi
             fi # End write check
             
-            if $alpine_repo_modified; then
+            if $alpine_repo_modified_by_script; then
                 _log_info "Alpine 仓库配置已修改，强制执行 apk update..."
-                if ! apk update; then # Run without >/dev/null to see errors
+                if ! apk update; then # Show output for this critical update
                      _log_error "修改仓库后执行 apk update 失败。qrencode 等包可能无法安装。"
                 else
                      _log_success "修改仓库后 apk update 执行成功。"
                 fi
             else
-                 _log_warning "未能成功启用或添加 Alpine community repository。qrencode 等包可能无法安装。"
+                 _log_warning "脚本未修改 Alpine community repository (可能已启用或无法自动处理)。"
             fi
         else
             _log_info "Alpine community repository 已启用。"
         fi
-        # Always run apk update once before installing packages on Alpine, even if no repo change was made by script
-        # This handles cases where user might have manually changed it or it's first run
+        # Always run apk update once before installing packages on Alpine
         _log_info "为 Alpine 执行 apk update (确保最新列表)..."
-        if ! apk update >/dev/null; then _log_warning "Alpine apk update 失败。"; fi
+        if ! apk update; then # Show output
+             _log_warning "Alpine apk update 失败 (可能是网络问题或已是最新)。"; 
+        fi
 
-    else # For Debian/Ubuntu
+    elif [[ "$DISTRO_FAMILY" == "debian" ]]; then # For Debian/Ubuntu
         if ! $PKG_UPDATE_CMD >/dev/null; then
-            _log_warning "更新列表失败 (可能是网络问题，或已是最新)。"; 
+            _log_warning "Debian/Ubuntu 更新列表失败 (可能是网络问题，或已是最新)。"; 
         fi
     fi
     
@@ -170,7 +153,13 @@ _install_dependencies() {
             _log_info "$pkg 已安装。"
         else 
             _log_info "正在安装 $pkg..."
-            if ! $PKG_INSTALL_CMD "$pkg"; then # Run without >/dev/null to see errors
+            # For Alpine, show output for all package installations to catch errors like qrencode
+            if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
+                if ! apk add --no-cache "$pkg"; then # Show output
+                    _log_error "安装 $pkg 在 Alpine 上失败。请检查上面的 apk 输出。"
+                    exit 1
+                fi
+            elif ! $PKG_INSTALL_CMD "$pkg" > /dev/null; then # Original logic for Debian (quiet)
                 _log_error "安装 $pkg 失败。请手动安装后重试。"
                 exit 1
             fi
@@ -184,78 +173,38 @@ _generate_random_lowercase_string() { LC_ALL=C tr -dc 'a-z' < /dev/urandom | hea
 _get_server_address() { local ipv6_ip; local ipv4_ip; _log_info "检测公网IP..."; _log_info "尝试IPv6..."; ipv6_ip=$(curl -s -m 5 -6 https://ifconfig.me || curl -s -m 5 -6 https://ip.sb || curl -s -m 5 -6 https://api64.ipify.org); if [ -n "$ipv6_ip" ] && [[ "$ipv6_ip" == *":"* ]]; then _log_success "IPv6: $ipv6_ip"; echo "[$ipv6_ip]"; return; else _log_warning "无IPv6."; fi; _log_info "尝试IPv4..."; ipv4_ip=$(curl -s -m 5 -4 https://ifconfig.me || curl -s -m 5 -4 https://ip.sb || curl -s -m 5 -4 https://api.ipify.org); if [ -n "$ipv4_ip" ] && [[ "$ipv4_ip" != *":"* ]]; then _log_success "IPv4: $ipv4_ip"; echo "$ipv4_ip"; return; else _log_warning "无IPv4."; fi; _log_error "无法获取公网IP."; exit 1; }
 
 _setup_hy_command() {
-    _ensure_root
-    local installed_hy_path="/usr/local/bin/${SCRIPT_COMMAND_NAME}"
-    local current_hy_version=""
-    local downloaded_hy_version=""
-    local perform_update=true # Assume update needed unless proven otherwise
-
-    _log_info "设置/更新 '${SCRIPT_COMMAND_NAME}' 命令到 ${installed_hy_path}..." 
-    
-    if [ -f "$installed_hy_path" ]; then
-        current_hy_version=$(grep '^SCRIPT_VERSION=' "$installed_hy_path" | head -n 1 | cut -d'"' -f2)
-        if [ -n "$current_hy_version" ]; then
-            _log_info "当前已安装 '${SCRIPT_COMMAND_NAME}' 版本: ${current_hy_version}"
-        else
-             _log_warning "无法从 ${installed_hy_path} 解析当前版本。"
-        fi
-    else
-        _log_info "'${SCRIPT_COMMAND_NAME}' 命令当前未安装。"
-    fi
-
+    # ... (Function remains the same as previous version) ...
+    _ensure_root; _log_info "设置'${SCRIPT_COMMAND_NAME}'命令到/usr/local/bin/${SCRIPT_COMMAND_NAME}..."; 
     if [[ "$HY_SCRIPT_URL_ON_GITHUB" == *"YOUR_USERNAME"* || "$HY_SCRIPT_URL_ON_GITHUB" == *"YOUR_REPONAME"* || "$HY_SCRIPT_URL_ON_GITHUB" == *"YOUR_BRANCH"* ]]; then 
-        _log_error "HY_SCRIPT_URL_ON_GITHUB 未配置!"; _log_warning "请编辑脚本设置URL或手动复制。"; 
+        _log_error "HY_SCRIPT_URL_ON_GITHUB 未配置!"; _log_warning "请编辑脚本设置URL或手动复制: sudo cp \"${0:-${SCRIPT_FILE_BASENAME}}\" /usr/local/bin/${SCRIPT_COMMAND_NAME} && sudo chmod +x /usr/local/bin/${SCRIPT_COMMAND_NAME}"; 
         return 1 
     fi
+    _log_info "从URL($HY_SCRIPT_URL_ON_GITHUB)下载..."; TMP_SCRIPT_DOWNLOAD_PATH=$(mktemp); 
+    if wget -qO "$TMP_SCRIPT_DOWNLOAD_PATH" "$HY_SCRIPT_URL_ON_GITHUB"; then 
+        if head -n 1 "$TMP_SCRIPT_DOWNLOAD_PATH" | grep -q -E "^#!/(usr/)?bin/(bash|sh)"; then 
+            local current_hy_version_installed=""
+            local downloaded_hy_version_script=""
+            if [ -f "/usr/local/bin/${SCRIPT_COMMAND_NAME}" ]; then
+                current_hy_version_installed=$(grep '^SCRIPT_VERSION=' "/usr/local/bin/${SCRIPT_COMMAND_NAME}" | head -n 1 | cut -d'"' -f2)
+            fi
+            downloaded_hy_version_script=$(grep '^SCRIPT_VERSION=' "$TMP_SCRIPT_DOWNLOAD_PATH" | head -n 1 | cut -d'"' -f2)
 
-    _log_info "从 URL ($HY_SCRIPT_URL_ON_GITHUB) 下载最新管理脚本..." 
-    TMP_SCRIPT_DOWNLOAD_PATH=$(mktemp)
-    if ! wget -qO "$TMP_SCRIPT_DOWNLOAD_PATH" "$HY_SCRIPT_URL_ON_GITHUB"; then 
-        _log_error "下载脚本失败。"; rm -f "$TMP_SCRIPT_DOWNLOAD_PATH"; return 1 
-    fi
-
-    if ! head -n 1 "$TMP_SCRIPT_DOWNLOAD_PATH" | grep -q -E "^#!/(usr/)?bin/(bash|sh)"; then
-        _log_error "下载内容非有效脚本. URL: $HY_SCRIPT_URL_ON_GITHUB"; _log_warning "开头: $(head -n 1 "$TMP_SCRIPT_DOWNLOAD_PATH")"; rm -f "$TMP_SCRIPT_DOWNLOAD_PATH"; return 1
-    fi
-    downloaded_hy_version=$(grep '^SCRIPT_VERSION=' "$TMP_SCRIPT_DOWNLOAD_PATH" | head -n 1 | cut -d'"' -f2)
-    if [ -n "$downloaded_hy_version" ]; then
-        _log_info "下载的脚本版本: ${downloaded_hy_version}"
-    else
-        _log_warning "无法从下载的脚本解析版本号。"
-        # If downloaded version can't be parsed, assume update is needed if current version is known or not installed
-        if [ -z "$current_hy_version" ]; then perform_update=true; else perform_update=true; fi
-    fi
-
-    if [ -n "$current_hy_version" ] && [ -n "$downloaded_hy_version" ]; then
-        if [[ "$current_hy_version" == "$downloaded_hy_version" ]]; then
-            _log_success "'${SCRIPT_COMMAND_NAME}' 脚本已是最新版本 ($current_hy_version)。"
-            perform_update=false
-        else
-             _log_info "发现新版本 (${downloaded_hy_version})，当前版本为 ${current_hy_version}。"
+            if [ -n "$current_hy_version_installed" ] && [ -n "$downloaded_hy_version_script" ] && [[ "$current_hy_version_installed" == "$downloaded_hy_version_script" ]]; then
+                 _log_success "'${SCRIPT_COMMAND_NAME}' 脚本已是最新版本 ($current_hy_version_installed)。"
+                 rm -f "$TMP_SCRIPT_DOWNLOAD_PATH"
+                 return 0
+            fi
+            if [ -f "/usr/local/bin/${SCRIPT_COMMAND_NAME}" ]; then _log_info "备份现有命令..."; cp "/usr/local/bin/${SCRIPT_COMMAND_NAME}" "/usr/local/bin/${SCRIPT_COMMAND_NAME}.old.$(date +%s)"; fi
+            if mv "$TMP_SCRIPT_DOWNLOAD_PATH" "/usr/local/bin/${SCRIPT_COMMAND_NAME}"; then 
+                chmod +x "/usr/local/bin/${SCRIPT_COMMAND_NAME}"; _log_success "'${SCRIPT_COMMAND_NAME}'命令已从 URL 安装/更新 (版本: ${downloaded_hy_version_script:-未知})。"; return 0
+            else 
+                _log_error "移动下载脚本失败."; rm -f "$TMP_SCRIPT_DOWNLOAD_PATH"; return 1
+            fi
+        else 
+            _log_error "下载内容非有效脚本. URL: $HY_SCRIPT_URL_ON_GITHUB"; _log_warning "开头: $(head -n 1 "$TMP_SCRIPT_DOWNLOAD_PATH")"; rm -f "$TMP_SCRIPT_DOWNLOAD_PATH"; return 1
         fi
-    elif [ -f "$installed_hy_path" ] && [ -z "$downloaded_hy_version" ]; then
-        _log_warning "无法确定下载脚本的版本，但本地已安装。建议手动检查更新。"
-        perform_update=false # Avoid accidental overwrite if remote version is unknown
-    fi
-    
-    if $perform_update; then
-         _log_info "正在安装/更新 '${SCRIPT_COMMAND_NAME}' 命令..."
-         if [ -f "$installed_hy_path" ]; then _log_info "备份现有命令..."; cp "$installed_hy_path" "${installed_hy_path}.old.$(date +%s)"; fi
-         if mv "$TMP_SCRIPT_DOWNLOAD_PATH" "$installed_hy_path"; then 
-             chmod +x "$installed_hy_path"
-             _log_success "'${SCRIPT_COMMAND_NAME}' 命令已成功安装/更新到 ${installed_hy_path} (版本: ${downloaded_hy_version:-未知})"
-             if [[ "${ACTION:-install}" == "install" ]]; then 
-                 _log_info "您现在应该可以在任何地方使用 'sudo ${SCRIPT_COMMAND_NAME} <action>' 来管理 Hysteria。"
-             fi
-             return 0 
-         else 
-             _log_error "移动下载脚本到 ${installed_hy_path} 失败。权限问题？"
-             rm -f "$TMP_SCRIPT_DOWNLOAD_PATH"; 
-             return 1 
-         fi
-    else
-        rm -f "$TMP_SCRIPT_DOWNLOAD_PATH" 
-        return 0 
+    else 
+        _log_error "下载脚本失败."; rm -f "$TMP_SCRIPT_DOWNLOAD_PATH"; return 1
     fi
 }
 
@@ -477,7 +426,7 @@ _update_hy_script() {
     fi
 }
 _do_update() {
-    # ... (Function remains the same as previous version, checking return status) ...
+    # ... (Function remains the same as previous version) ...
      local hy_update_ok=false; local script_update_ok=false
     _log_info "== 正在更新 Hysteria 程序 =="; if _update_hysteria_binary; then hy_update_ok=true; fi
     echo "---"; _log_info "== 正在更新 ${SCRIPT_COMMAND_NAME} 管理脚本 =="; if _update_hy_script; then script_update_ok=true; fi
@@ -533,7 +482,7 @@ case "$ACTION" in
             if [ -n "$HY_VERSION" ]; then
                 echo "已安装 Hysteria 版本: $HY_VERSION"
                 echo "--- Hysteria 完整版本信息 ---" 
-                echo "$HY_VERSION_OUTPUT" # Display the full captured output
+                echo "$HY_VERSION_OUTPUT" 
                 echo "-----------------------------"
             else
                  _log_warning "无法从 '$HYSTERIA_INSTALL_PATH version' 解析版本号。尝试显示原始输出:"
