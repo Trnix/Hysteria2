@@ -3,8 +3,8 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.5" # Incremented for final Alpine OpenRC and qrencode fixes
-SCRIPT_DATE="2025-05-09"
+SCRIPT_VERSION="1.5.6" # Incremented for enable/disable debugging
+SCRIPT_DATE="2025-05-08"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
 
@@ -206,7 +206,7 @@ _display_link_and_qrcode() {
 _do_install() {
     _ensure_root; _detect_os
     if _is_hysteria_installed; then _read_confirm_tty confirm_install "Hysteria 已安装。是否强制安装(覆盖配置)? [y/N]: "; if [[ "$confirm_install" != "y" && "$confirm_install" != "Y" ]]; then _log_info "安装取消。"; exit 0; fi; _log_warning "正强制安装..."; fi
-    _install_dependencies # Now installs qrencode by default
+    _install_dependencies
     DEFAULT_MASQUERADE_URL="https://www.bing.com"; DEFAULT_PORT="34567"; DEFAULT_ACME_EMAIL="$(_generate_random_lowercase_string)@gmail.com"
     echo ""; _log_info "请选择 TLS 验证方式:"; echo "1. 自定义证书"; echo "2. ACME HTTP 验证"; _read_from_tty TLS_TYPE "选择 [1-2, 默认 1]: "; TLS_TYPE=${TLS_TYPE:-1}
     CERT_PATH=""; KEY_PATH=""; DOMAIN=""; SNI_VALUE=""; ACME_EMAIL=""
@@ -339,7 +339,7 @@ _do_uninstall() {
 }
 
 # ==========================================================================
-# START OF CORRECTED _control_service FUNCTION
+# START OF CORRECTED _control_service FUNCTION (with enable/disable debugging)
 # ==========================================================================
 _control_service() {
     _detect_os; local action="$1"
@@ -428,21 +428,24 @@ _control_service() {
         disable)
             _ensure_root
             _log_info "禁用Hysteria开机自启..."
-            _log_info "执行命令: rc-update del \"$service_name_to_manage\" default" # 假设OpenRC下总是default runlevel
             if [[ "$INIT_SYSTEM" == "systemd" ]]; then
-                if "$SERVICE_CMD" disable "$service_name_to_manage"; then
+                _log_info "执行命令: $SERVICE_CMD disable \"$service_name_to_manage\""
+                if "$SERVICE_CMD" disable "$service_name_to_manage"; then # Removed redirection for debugging consistency
                      _log_success "已禁用开机自启。"
                 else
-                    _log_error "禁用开机自启失败 (systemd)。"
+                    local exit_code=$?
+                    _log_error "禁用开机自启失败 (systemd)。 (退出码: $exit_code)"
+                    _log_warning "请检查上面来自 'systemctl' 命令的详细错误输出。"
                     return 1
                 fi
             elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
-                if rc-update del "$service_name_to_manage" default; then
+                 _log_info "执行命令: rc-update del \"$service_name_to_manage\" default"
+                if rc-update del "$service_name_to_manage" default; then # Removed redirection
                     _log_success "已禁用开机自启。"
                 else
                     local exit_code=$?
                     _log_error "禁用开机自启失败 (openrc)。 (退出码: $exit_code)"
-                     _log_warning "请检查上面来自 'rc-update' 命令的详细错误输出。"
+                    _log_warning "请检查上面来自 'rc-update' 命令的详细错误输出。"
                     return 1
                 fi
             fi
@@ -496,7 +499,7 @@ _update_hysteria_binary() {
 
 _update_hy_script() {
     _log_info "尝试更新'${SCRIPT_COMMAND_NAME}'管理脚本本身...";
-    if _setup_hy_command; then # _setup_hy_command now returns 0 for success/no update, 1 for failure
+    if _setup_hy_command; then
         return 0
     else
         return 1
@@ -510,7 +513,6 @@ _do_update() {
 }
 
 _show_menu() {
-    # Updated menu: removed qrcode, updated info description
     echo ""; _log_info "Hysteria 管理面板 (${SCRIPT_COMMAND_NAME} v$SCRIPT_VERSION - $SCRIPT_DATE)"
     echo "--------------------------------------------"; echo " 服务管理:";
     echo "   start         - 启动 Hysteria 服务"; echo "   stop          - 停止 Hysteria 服务"; echo "   restart       - 重启 Hysteria 服务"; echo "   status        - 查看 Hysteria 服务状态"; echo "   enable        - 设置 Hysteria 服务开机自启"; echo "   disable       - 禁止 Hysteria 服务开机自启"
@@ -529,7 +531,7 @@ _show_menu() {
 
 _show_management_commands_hint() { _log_info "您可使用 'sudo ${SCRIPT_COMMAND_NAME} help' 或不带参数运行 'sudo ${SCRIPT_COMMAND_NAME}' 查看管理命令面板。"; }
 
-_show_info_and_qrcode() { # Added function to combine info and qrcode display
+_show_info_and_qrcode() {
     _detect_os
     if ! _is_hysteria_installed; then
         _log_error "Hysteria 未安装。无法显示信息和二维码。"
@@ -560,7 +562,6 @@ case "$ACTION" in
     config_edit)      _ensure_root; if ! _is_hysteria_installed; then _log_error "Hysteria未安装."; exit 1; fi; if [ -z "$EDITOR" ]; then EDITOR="vi"; fi; _log_info "使用 $EDITOR 打开 $HYSTERIA_CONFIG_FILE ..."; if $EDITOR "$HYSTERIA_CONFIG_FILE"; then _log_info "编辑完成。考虑重启服务: sudo $SCRIPT_COMMAND_NAME restart"; else _log_error "编辑器 '$EDITOR' 返回错误。"; fi ;;
     config_change)    _change_config_interactive ;;
     info)             _show_info_and_qrcode ;;
-    # qrcode|qrc)     # Removed separate qrcode command - now part of info
     logs)             if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [ ! -f "$LOG_FILE_OUT" ]; then _log_error "日志文件 $LOG_FILE_OUT 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 ($LOG_FILE_OUT)。"; tail -f "$LOG_FILE_OUT" ;;
     logs_err)         if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [ ! -f "$LOG_FILE_ERR" ]; then _log_error "日志文件 $LOG_FILE_ERR 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 ($LOG_FILE_ERR)。"; tail -f "$LOG_FILE_ERR" ;;
     logs_sys)         _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "按 CTRL+C 退出 (journalctl -f)。"; journalctl -u "$CURRENT_HYSTERIA_SERVICE_NAME" -f --no-pager; else _log_error "此命令仅适用于 systemd 系统。"; fi ;;
