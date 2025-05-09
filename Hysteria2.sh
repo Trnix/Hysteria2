@@ -3,11 +3,10 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.3" # Fixed service control command argument order for systemd/openrc
+SCRIPT_VERSION="1.5.4" # Fixed OpenRC checkpath arguments in generated service script
 SCRIPT_DATE="2025-05-09"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
-
 HYSTERIA_INSTALL_PATH="/usr/local/bin/hysteria"
 HYSTERIA_CONFIG_DIR="/etc/hysteria"
 HYSTERIA_CONFIG_FILE="${HYSTERIA_CONFIG_DIR}/config.yaml"
@@ -349,14 +348,41 @@ Restart=on-failure; RestartSec=10; StandardOutput=append:$LOG_FILE_OUT; Standard
 [Install]
 WantedBy=multi-user.target
 EOF
-        chmod 644 "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME"; $SERVICE_CMD daemon-reload
+        chmod 644 "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME"; $SERVICE_CMD daemon-reload # systemctl daemon-reload
     elif [ "$INIT_SYSTEM" == "openrc" ]; then _log_info "创建OpenRC服务..."; cat > "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME" << EOF
 #!/sbin/openrc-run
-name="$HYSTERIA_SERVICE_NAME_OPENRC"; command="$HYSTERIA_INSTALL_PATH"; command_args="server --config $HYSTERIA_CONFIG_FILE"; pidfile="/var/run/\${name}.pid"; command_background="yes"; output_log="$LOG_FILE_OUT"; error_log="$LOG_FILE_ERR"
-depend() { need net; after firewall; }
-start_pre() { checkpath -f \$output_log -m 0644 \$RC_SVCNAME; checkpath -f \$error_log -m 0644 \$RC_SVCNAME; }
-start() { ebegin "Starting \$name"; start-stop-daemon --start --quiet --background --make-pidfile --pidfile \$pidfile --stdout \$output_log --stderr \$error_log --exec \$command -- \$command_args; eend \$?; }
-stop() { ebegin "Stopping \$name"; start-stop-daemon --stop --quiet --pidfile \$pidfile; eend \$?; }
+name="$HYSTERIA_SERVICE_NAME_OPENRC"
+command="$HYSTERIA_INSTALL_PATH"
+command_args="server --config $HYSTERIA_CONFIG_FILE"
+pidfile="/var/run/\${name}.pid"
+command_background="yes"
+output_log="$LOG_FILE_OUT"
+error_log="$LOG_FILE_ERR"
+
+depend() {
+  need net
+  after firewall
+}
+
+start_pre() {
+  checkpath -f "\$output_log" -m 0644 # Removed owner argument
+  checkpath -f "\$error_log" -m 0644 # Removed owner argument
+}
+
+start() {
+  ebegin "Starting \$name"
+  start-stop-daemon --start --quiet --background \
+    --make-pidfile --pidfile "\$pidfile" \
+    --stdout "\$output_log" --stderr "\$error_log" \
+    --exec "\$command" -- \$command_args
+  eend \$?
+}
+
+stop() {
+  ebegin "Stopping \$name"
+  start-stop-daemon --stop --quiet --pidfile "\$pidfile"
+  eend \$?
+}
 EOF
         chmod +x "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME"; fi; _log_success "服务文件创建成功。"
     _control_service "enable"; _control_service "restart"
@@ -408,9 +434,12 @@ _do_uninstall() {
 
 _control_service() {
     _detect_os; local action="$1"
-    if ! _is_hysteria_installed && [[ "$action" != "enable" && "$action" != "disable" ]]; then # enable/disable might be called during install before full setup
-        if _is_hysteria_installed; then : # Already installed, proceed
-        else _log_error "Hysteria未安装或服务未配置。请用'${SCRIPT_COMMAND_NAME} install'安装。"; return 1;
+    # Allow enable/disable to be called even if service file not fully there yet (during install)
+    if ! _is_hysteria_installed && ! ( [[ "$action" == "enable" || "$action" == "disable" ]] && [ -f "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME" -o -f "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME" ] ) ; then
+        if _is_hysteria_installed; then : # Double check, proceed if actually installed
+        else
+            _log_error "Hysteria未安装或服务未配置。请用'${SCRIPT_COMMAND_NAME} install'安装。 (Action: $action)"
+            return 1
         fi
     fi
 
@@ -421,15 +450,37 @@ _control_service() {
     elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
         cmd_to_run="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME $action"
     else
-        _log_error "不支持的初始化系统: $INIT_SYSTEM (action: $action)"; constructed_cmd_success=false; return 1;
+        _log_error "不支持的初始化系统: $INIT_SYSTEM (action: $action)"; constructed_cmd_success=false;
+        return 1;
     fi
 
     case "$action" in
         start|stop|restart)
             _ensure_root; _log_info "执行: $cmd_to_run"
-            if ! $constructed_cmd_success; then return 1; fi # Should already have exited if init system unknown
+            if ! $constructed_cmd_success; then return 1; fi # Should be caught by above else
 
-            if $cmd_to_run; then
+            # For OpenRC, stop might return non-zero if already stopped. This is fine.
+            # For restart, if stop fails because already stopped, start should still proceed.
+            local cmd_output
+            local cmd_exit_code
+            
+            # Capture output and exit code without printing to stdout/stderr immediately
+            cmd_output=$(eval "$cmd_to_run" 2>&1)
+            cmd_exit_code=$?
+
+            if [[ "$INIT_SYSTEM" == "openrc" && ("$action" == "stop" || "$action" == "restart") && $(echo "$cmd_output" | grep -c "stop" | grep -c "failed") -gt 0 && $(echo "$cmd_output" | grep -c "already stopped") -gt 0 ]]; then
+                _log_warning "服务 '$CURRENT_HYSTERIA_SERVICE_NAME' 在尝试停止时可能已停止。继续操作..."
+                if [[ "$action" == "restart" ]]; then # If it was a restart, we still need to start it
+                    local start_cmd_openrc="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME start"
+                    _log_info "尝试启动 (作为 restart 的一部分): $start_cmd_openrc"
+                    cmd_output=$(eval "$start_cmd_openrc" 2>&1)
+                    cmd_exit_code=$?
+                else # For stop action, if it was already stopped, consider it a success for "stop"
+                    cmd_exit_code=0 
+                fi
+            fi
+            
+            if [ $cmd_exit_code -eq 0 ]; then
                 _log_success "操作'$action'成功。"
                 if [[ "$action" == "start" || "$action" == "restart" ]]; then
                     sleep 1;
@@ -440,11 +491,12 @@ _control_service() {
                         status_cmd_to_run="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME status"
                     fi
                     if [ -n "$status_cmd_to_run" ]; then
-                        $status_cmd_to_run 2>/dev/null | head -n 7 || $status_cmd_to_run # Show some status output
+                        ($status_cmd_to_run 2>/dev/null | head -n 7) || $status_cmd_to_run
                     fi
                 fi
             else
-                _log_error "操作'$action'失败。"
+                _log_error "操作'$action'失败。输出:"
+                echo "$cmd_output" # Print the captured output on failure
                 _log_warning "请检查日志:"
                 echo "  输出: tail -n 30 $LOG_FILE_OUT"
                 echo "  错误: tail -n 30 $LOG_FILE_ERR"
