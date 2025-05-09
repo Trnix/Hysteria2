@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.4" # Incremented for final Alpine fixes
+SCRIPT_VERSION="1.5.5" # Incremented for final Alpine OpenRC and qrencode fixes
 SCRIPT_DATE="2025-05-09" 
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -14,7 +14,7 @@ HYSTERIA_CONFIG_FILE="${HYSTERIA_CONFIG_DIR}/config.yaml"
 HYSTERIA_CERTS_DIR="${HYSTERIA_CONFIG_DIR}/certs"
 HYSTERIA_INSTALL_VARS_FILE="${HYSTERIA_CONFIG_DIR}/install_vars.conf" 
 HYSTERIA_SERVICE_NAME_SYSTEMD="hysteria.service"
-HYSTERIA_SERVICE_NAME_OPENRC="hysteria" # This is the service name, not the command
+HYSTERIA_SERVICE_NAME_OPENRC="hysteria" 
 LOG_FILE_OUT="/var/log/hysteria.log"
 LOG_FILE_ERR="/var/log/hysteria.error.log"
 
@@ -43,16 +43,16 @@ _detect_os() {
     
     if [[ "$DISTRO_FAMILY" == "alpine" ]]; then 
         PKG_INSTALL_CMD="apk add --no-cache"; PKG_UPDATE_CMD="apk update"; PKG_REMOVE_CMD="apk del"
-        INIT_SYSTEM="openrc"; SERVICE_CMD="rc-service"; # Changed to rc-service for Alpine
+        INIT_SYSTEM="openrc"; SERVICE_CMD="rc-service"; # Corrected for Alpine
         ENABLE_CMD_PREFIX="rc-update add"; ENABLE_CMD_SUFFIX="default"
         SETCAP_DEPENDENCY_PKG="libcap"; REQUIRED_PKGS_OS_SPECIFIC="openrc"
         CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_OPENRC"
     elif [[ "$DISTRO_FAMILY" == "debian" ]]; then 
         export DEBIAN_FRONTEND=noninteractive; PKG_INSTALL_CMD="apt-get install -y -q"; PKG_UPDATE_CMD="apt-get update -q"; PKG_REMOVE_CMD="apt-get remove -y -q"
         INIT_SYSTEM="systemd"; SERVICE_CMD="systemctl"; 
-        ENABLE_CMD_PREFIX="systemctl enable"; ENABLE_CMD_SUFFIX=""
+        ENABLE_CMD_PREFIX="systemctl enable"; ENABLE_CMD_SUFFIX="" # .service is appended later for systemd
         SETCAP_DEPENDENCY_PKG="libcap2-bin"; REQUIRED_PKGS_OS_SPECIFIC=""
-        CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_SYSTEMD"
+        CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_SYSTEMD" # This will be hysteria.service
     fi
 }
 
@@ -85,8 +85,7 @@ _install_dependencies() {
                             else _log_info "默认 community repository line ('$community_line_to_add') 已存在。"; fi
                         else _log_warning "无法从 /etc/os-release 获取 Alpine 版本号。"; fi
                     else _log_warning "/etc/os-release 文件未找到。"; fi
-                fi
-                _log_info "修改后 /etc/apk/repositories 内容:"; cat "$repo_file"
+                fi; _log_info "修改后 /etc/apk/repositories 内容:"; cat "$repo_file"
             fi 
             if $alpine_repo_modified_by_script; then _log_info "Alpine 仓库配置已修改，强制执行 apk update (显示输出)..."; if ! apk update; then _log_error "修改仓库后执行 apk update 失败。"; else _log_success "修改仓库后 apk update 执行成功。"; fi
             else _log_warning "脚本未修改 Alpine community repository。"; fi
@@ -95,11 +94,14 @@ _install_dependencies() {
         _log_info "尝试搜索 qrencode 相关包 (apk search -v qrencode)..."; apk search -v qrencode 
     elif [[ "$DISTRO_FAMILY" == "debian" ]]; then if ! $PKG_UPDATE_CMD >/dev/null; then _log_warning "Debian/Ubuntu 更新列表失败。"; fi; fi
     
-    REQUIRED_PKGS_COMMON="wget curl git openssl lsof coreutils" 
-    if [[ "$DISTRO_FAMILY" == "debian" ]]; then REQUIRED_PKGS_COMMON="$REQUIRED_PKGS_COMMON qrencode"; 
-    elif [[ "$DISTRO_FAMILY" == "alpine" ]]; then REQUIRED_PKGS_COMMON="$REQUIRED_PKGS_COMMON libqrencode-tools"; # Use correct package name for Alpine
+    local qrencode_pkg_name="qrencode" # Default
+    if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
+        qrencode_pkg_name="libqrencode-tools" # Use correct package name for Alpine
     fi
-    REQUIRED_PKGS="$REQUIRED_PKGS_COMMON"; if [ -n "$REQUIRED_PKGS_OS_SPECIFIC" ]; then REQUIRED_PKGS="$REQUIRED_PKGS $REQUIRED_PKGS_OS_SPECIFIC"; fi
+    REQUIRED_PKGS_COMMON="wget curl git openssl lsof coreutils ${qrencode_pkg_name}" 
+    
+    REQUIRED_PKGS="$REQUIRED_PKGS_COMMON"
+    if [ -n "$REQUIRED_PKGS_OS_SPECIFIC" ]; then REQUIRED_PKGS="$REQUIRED_PKGS $REQUIRED_PKGS_OS_SPECIFIC"; fi
     
     if ! command -v realpath &>/dev/null && [[ "$DISTRO_FAMILY" == "debian" || "$DISTRO_FAMILY" == "alpine" ]]; then _log_info "确保 realpath 命令可用 (通过 coreutils)..."; if ! $PKG_INSTALL_CMD coreutils > /dev/null; then _log_warning "尝试安装/确保 coreutils 失败。"; fi; if ! command -v realpath &>/dev/null; then _log_error "realpath 命令在安装 coreutils 后仍然不可用。"; exit 1; fi; fi
     
@@ -107,12 +109,15 @@ _install_dependencies() {
         installed=false
         if [[ "$DISTRO_FAMILY" == "alpine" ]]; then if apk info -e "$pkg" &>/dev/null; then installed=true; fi
         elif [[ "$DISTRO_FAMILY" == "debian" ]]; then if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then installed=true; fi; fi
-        if $installed; then _log_info "$pkg 已安装。"; 
-        else _log_info "正在安装 $pkg..."; 
-             if ! $PKG_INSTALL_CMD "$pkg"; then # Show output for all installs now
+        
+        if $installed; then 
+            _log_info "$pkg 已安装。"
+        else 
+            _log_info "正在安装 $pkg..."
+            if ! $PKG_INSTALL_CMD "$pkg"; then 
                 _log_error "安装 $pkg 失败。请检查上面的输出。"
                 exit 1
-             fi
+            fi
         fi
     done
     _log_success "依赖包安装成功。" 
@@ -271,11 +276,52 @@ EOF
         chmod 644 "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME"; $SERVICE_CMD daemon-reload
     elif [ "$INIT_SYSTEM" == "openrc" ]; then _log_info "创建OpenRC服务..."; cat > "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME" << EOF
 #!/sbin/openrc-run
-name="$HYSTERIA_SERVICE_NAME_OPENRC"; command="$HYSTERIA_INSTALL_PATH"; command_args="server --config $HYSTERIA_CONFIG_FILE"; pidfile="/var/run/\${RC_SVCNAME}.pid"; command_background="yes"; output_log="$LOG_FILE_OUT"; error_log="$LOG_FILE_ERR" # Use RC_SVCNAME for pidfile
-depend() { need net; after firewall; }
-start_pre() { checkpath -f \$output_log -m 0644 \$RC_SVCNAME; checkpath -f \$error_log -m 0644 \$RC_SVCNAME; }
-start() { ebegin "Starting \$name"; start-stop-daemon --start --quiet --background --make-pidfile --pidfile \$pidfile --stdout \$output_log --stderr \$error_log --exec \$command -- \$command_args; eend \$?; }
-stop() { ebegin "Stopping \$name"; start-stop-daemon --stop --quiet --pidfile \$pidfile; eend \$?; }
+# shellcheck shell=ash
+
+description="Hysteria 2 Proxy Server"
+command="${HYSTERIA_INSTALL_PATH}"
+command_args="server --config ${HYSTERIA_CONFIG_FILE}"
+pidfile="/var/run/\${RC_SVCNAME}.pid" 
+
+output_log="${LOG_FILE_OUT}" 
+error_log="${LOG_FILE_ERR}"   
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    checkpath -f "\${output_log}" -m 0644 -o root:root
+    checkpath -f "\${error_log}" -m 0644 -o root:root
+}
+
+start() {
+    ebegin "Starting \${RC_SVCNAME}"
+    start-stop-daemon --start --quiet --background \\
+        --make-pidfile --pidfile "\${pidfile}" \\
+        --exec "\${command}" -- \${command_args} \\
+        --stdout "\${output_log}" --stderr "\${error_log}"
+    eend \$?
+}
+
+stop() {
+    ebegin "Stopping \${RC_SVCNAME}"
+    start-stop-daemon --stop --quiet --pidfile "\${pidfile}"
+    eend \$?
+}
+
+restart() {
+    ebegin "Restarting \${RC_SVCNAME}"
+    "${0}" stop && "${0}" start
+    eend \$?
+}
+
+status() {
+    ebegin "Checking status of \${RC_SVCNAME}"
+    start-stop-daemon --status --pidfile "\${pidfile}"
+    eend \$? "\${RC_SVCNAME} status" 
+}
 EOF
         chmod +x "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME"; fi; _log_success "服务文件创建成功。"
     _control_service "enable"; _control_service "restart"
@@ -307,12 +353,12 @@ _do_uninstall() {
     _log_info "移除Hysteria配置: $HYSTERIA_CONFIG_DIR"; rm -rf "$HYSTERIA_CONFIG_DIR"
     _log_info "移除Hysteria日志: $LOG_FILE_OUT, $LOG_FILE_ERR"; rm -f "$LOG_FILE_OUT" "$LOG_FILE_ERR"
     
-    local qrencode_pkg_name="qrencode"
-    if [[ "$DISTRO_FAMILY" == "alpine" ]]; then qrencode_pkg_name="libqrencode-tools"; fi
-    if command -v qrencode &>/dev/null || ([[ "$DISTRO_FAMILY" == "alpine" ]] && apk info -e "$qrencode_pkg_name" &>/dev/null) ; then 
-        _log_info "尝试自动卸载 $qrencode_pkg_name..."
-        if $PKG_REMOVE_CMD "$qrencode_pkg_name" >/dev/null; then _log_success "$qrencode_pkg_name 已卸载。"; 
-        else _log_warning "卸载 $qrencode_pkg_name 失败。"; fi
+    local qrencode_pkg_to_remove="qrencode"
+    if [[ "$DISTRO_FAMILY" == "alpine" ]]; then qrencode_pkg_to_remove="libqrencode-tools"; fi
+    if command -v qrencode &>/dev/null || ([[ "$DISTRO_FAMILY" == "alpine" ]] && apk info -e "$qrencode_pkg_to_remove" &>/dev/null) ; then 
+        _log_info "尝试自动卸载 $qrencode_pkg_to_remove..."
+        if $PKG_REMOVE_CMD "$qrencode_pkg_to_remove" >/dev/null; then _log_success "$qrencode_pkg_to_remove 已卸载。"; 
+        else _log_warning "卸载 $qrencode_pkg_to_remove 失败。"; fi
     fi
 
     if [ -f "/usr/local/bin/$SCRIPT_COMMAND_NAME" ]; then _log_info "尝试自动移除管理命令 /usr/local/bin/$SCRIPT_COMMAND_NAME ..."; if rm -f "/usr/local/bin/$SCRIPT_COMMAND_NAME"; then _log_success "/usr/local/bin/$SCRIPT_COMMAND_NAME 已移除。"; else _log_error "移除 /usr/local/bin/$SCRIPT_COMMAND_NAME 失败。"; fi; fi
@@ -322,14 +368,18 @@ _do_uninstall() {
 _control_service() {
     # ... (Function remains the same as previous version) ...
     _detect_os; local action="$1"
+    local service_name_to_manage="$CURRENT_HYSTERIA_SERVICE_NAME"
+    # For systemd, .service suffix is often implied or handled by systemctl, but being explicit is fine.
+    # For OpenRC, it's just the name. $CURRENT_HYSTERIA_SERVICE_NAME is already set correctly.
+
     if [[ "$action" == "start" || "$action" == "stop" || "$action" == "restart" || "$action" == "status" ]]; then if ! _is_hysteria_installed; then _log_error "Hysteria未安装或服务未配置。请用'${SCRIPT_COMMAND_NAME} install'安装。"; return 1; fi; fi
-    case "$action" in start|stop|restart) _ensure_root; _log_info "执行: $SERVICE_CMD $action $CURRENT_HYSTERIA_SERVICE_NAME"
-            if [[ "$INIT_SYSTEM" == "systemd" && "$action" == "stop" ]] && ! $SERVICE_CMD is-active --quiet "$CURRENT_HYSTERIA_SERVICE_NAME"; then _log_info "服务($CURRENT_HYSTERIA_SERVICE_NAME)已停止。"; return 0; fi
-            if $SERVICE_CMD "$action" "$CURRENT_HYSTERIA_SERVICE_NAME"; then _log_success "操作'$action'成功。"; if [[ "$action" == "start" || "$action" == "restart" ]]; then sleep 1; $SERVICE_CMD status "$CURRENT_HYSTERIA_SERVICE_NAME" 2>/dev/null | head -n 5 || $SERVICE_CMD status "$CURRENT_HYSTERIA_SERVICE_NAME"; fi
-            else _log_error "操作'$action'失败。"; _log_warning "请检查日志:"; echo "  输出: tail -n 30 $LOG_FILE_OUT"; echo "  错误: tail -n 30 $LOG_FILE_ERR"; if [ "$INIT_SYSTEM" == "systemd" ]; then echo "  Systemd状态: $SERVICE_CMD status $CURRENT_HYSTERIA_SERVICE_NAME"; echo "  Systemd日志: journalctl -u $CURRENT_HYSTERIA_SERVICE_NAME -n 20 --no-pager"; fi; return 1; fi;;
-        status) _log_info "Hysteria服务状态($CURRENT_HYSTERIA_SERVICE_NAME):"; $SERVICE_CMD "$action" "$CURRENT_HYSTERIA_SERVICE_NAME"; return $?;;
-        enable) _ensure_root; _log_info "启用Hysteria开机自启..."; if $ENABLE_CMD_PREFIX "$CURRENT_HYSTERIA_SERVICE_NAME" $ENABLE_CMD_SUFFIX >/dev/null 2>&1; then _log_success "已启用开机自启。"; else _log_error "启用开机自启失败。"; return 1; fi;;
-        disable) _ensure_root; _log_info "禁用Hysteria开机自启..."; if [[ "$INIT_SYSTEM" == "systemd" ]]; then $SERVICE_CMD disable "$CURRENT_HYSTERIA_SERVICE_NAME" >/dev/null 2>&1; elif [[ "$INIT_SYSTEM" == "openrc" ]]; then rc-update del "$CURRENT_HYSTERIA_SERVICE_NAME" default >/dev/null 2>&1; fi; _log_success "已禁用开机自启。";;
+    case "$action" in start|stop|restart) _ensure_root; _log_info "执行: $SERVICE_CMD $action $service_name_to_manage"
+            if [[ "$INIT_SYSTEM" == "systemd" && "$action" == "stop" ]] && ! $SERVICE_CMD is-active --quiet "$service_name_to_manage"; then _log_info "服务($service_name_to_manage)已停止。"; return 0; fi
+            if $SERVICE_CMD "$action" "$service_name_to_manage"; then _log_success "操作'$action'成功。"; if [[ "$action" == "start" || "$action" == "restart" ]]; then sleep 1; $SERVICE_CMD status "$service_name_to_manage" 2>/dev/null | head -n 5 || $SERVICE_CMD status "$service_name_to_manage"; fi
+            else _log_error "操作'$action'失败。"; _log_warning "请检查日志:"; echo "  输出: tail -n 30 $LOG_FILE_OUT"; echo "  错误: tail -n 30 $LOG_FILE_ERR"; if [ "$INIT_SYSTEM" == "systemd" ]; then echo "  Systemd状态: $SERVICE_CMD status $service_name_to_manage"; echo "  Systemd日志: journalctl -u $service_name_to_manage -n 20 --no-pager"; elif [ "$INIT_SYSTEM" == "openrc" ]; then echo "  OpenRC状态: $SERVICE_CMD $service_name_to_manage status"; fi; return 1; fi;;
+        status) _log_info "Hysteria服务状态($service_name_to_manage):"; $SERVICE_CMD "$action" "$service_name_to_manage"; return $?;;
+        enable) _ensure_root; _log_info "启用Hysteria开机自启..."; if $ENABLE_CMD_PREFIX "$service_name_to_manage" $ENABLE_CMD_SUFFIX >/dev/null 2>&1; then _log_success "已启用开机自启。"; else _log_error "启用开机自启失败。"; return 1; fi;;
+        disable) _ensure_root; _log_info "禁用Hysteria开机自启..."; if [[ "$INIT_SYSTEM" == "systemd" ]]; then $SERVICE_CMD disable "$service_name_to_manage" >/dev/null 2>&1; elif [[ "$INIT_SYSTEM" == "openrc" ]]; then rc-update del "$service_name_to_manage" default >/dev/null 2>&1; fi; _log_success "已禁用开机自启。";;
         *) _log_error "未知服务操作: $action"; return 1;;
     esac
 }
