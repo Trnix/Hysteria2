@@ -373,8 +373,6 @@ _control_service() {
                 _log_info "服务($service_name_to_manage)已停止。"
                 return 0
             fi
-            # 对于 OpenRC，如果服务已停止，rc-service stop 可能会返回非零值，这是正常的。
-            # 下面的执行会捕获实际的退出码来判断成功或失败。
 
             if "${cmd_to_run_array[@]}"; then # 使用数组执行命令
                 _log_success "操作'$action'成功。"
@@ -386,7 +384,6 @@ _control_service() {
                     else # systemd
                         status_cmd_array=("$SERVICE_CMD" "status" "$service_name_to_manage")
                     fi
-                    # 显示状态信息的前5行，或者如果状态信息很短则显示全部
                     "${status_cmd_array[@]}" 2>/dev/null | head -n 5 || "${status_cmd_array[@]}"
                 fi
             else
@@ -398,7 +395,6 @@ _control_service() {
                     echo "  Systemd状态: $SERVICE_CMD status $service_name_to_manage"
                     echo "  Systemd日志: journalctl -u $service_name_to_manage -n 20 --no-pager"
                 elif [ "$INIT_SYSTEM" == "openrc" ]; then
-                    # 此处的日志提示已经使用了正确的 OpenRC status 语法
                     echo "  OpenRC状态: $SERVICE_CMD $service_name_to_manage status"
                 fi
                 return 1
@@ -417,26 +413,39 @@ _control_service() {
         enable)
             _ensure_root
             _log_info "启用Hysteria开机自启..."
-            # ENABLE_CMD_PREFIX 和 ENABLE_CMD_SUFFIX 已经为不同系统正确定义
-            # systemd: systemctl enable hysteria.service
-            # openrc:  rc-update add hysteria default
-            if "$ENABLE_CMD_PREFIX" "$service_name_to_manage" $ENABLE_CMD_SUFFIX >/dev/null 2>&1; then
+            # 记录将要执行的命令
+            _log_info "执行命令: $ENABLE_CMD_PREFIX \"$service_name_to_manage\" $ENABLE_CMD_SUFFIX"
+            # 执行命令，不重定向输出，以便查看 rc-update 的详细错误
+            if "$ENABLE_CMD_PREFIX" "$service_name_to_manage" $ENABLE_CMD_SUFFIX; then
                 _log_success "已启用开机自启。"
             else
-                _log_error "启用开机自启失败。"
+                local exit_code=$? # 获取命令的退出码
+                _log_error "启用开机自启失败。 (退出码: $exit_code)"
+                _log_warning "请检查上面来自 'rc-update' 命令的详细错误输出。"
                 return 1
             fi
             ;;
         disable)
             _ensure_root
             _log_info "禁用Hysteria开机自启..."
+            _log_info "执行命令: rc-update del \"$service_name_to_manage\" default" # 假设OpenRC下总是default runlevel
             if [[ "$INIT_SYSTEM" == "systemd" ]]; then
-                "$SERVICE_CMD" disable "$service_name_to_manage" >/dev/null 2>&1
+                if "$SERVICE_CMD" disable "$service_name_to_manage"; then
+                     _log_success "已禁用开机自启。"
+                else
+                    _log_error "禁用开机自启失败 (systemd)。"
+                    return 1
+                fi
             elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
-                # openrc: rc-update del <服务名> default
-                rc-update del "$service_name_to_manage" default >/dev/null 2>&1
+                if rc-update del "$service_name_to_manage" default; then
+                    _log_success "已禁用开机自启。"
+                else
+                    local exit_code=$?
+                    _log_error "禁用开机自启失败 (openrc)。 (退出码: $exit_code)"
+                     _log_warning "请检查上面来自 'rc-update' 命令的详细错误输出。"
+                    return 1
+                fi
             fi
-            _log_success "已禁用开机自启。"
             ;;
         *)
             _log_error "未知服务操作: $action"
