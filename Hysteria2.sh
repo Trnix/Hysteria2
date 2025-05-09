@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.3" # Incremented for more Alpine repo debugging and specific package install
+SCRIPT_VERSION="1.5.4" # Incremented for final Alpine fixes
 SCRIPT_DATE="2025-05-09" 
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -14,7 +14,7 @@ HYSTERIA_CONFIG_FILE="${HYSTERIA_CONFIG_DIR}/config.yaml"
 HYSTERIA_CERTS_DIR="${HYSTERIA_CONFIG_DIR}/certs"
 HYSTERIA_INSTALL_VARS_FILE="${HYSTERIA_CONFIG_DIR}/install_vars.conf" 
 HYSTERIA_SERVICE_NAME_SYSTEMD="hysteria.service"
-HYSTERIA_SERVICE_NAME_OPENRC="hysteria"
+HYSTERIA_SERVICE_NAME_OPENRC="hysteria" # This is the service name, not the command
 LOG_FILE_OUT="/var/log/hysteria.log"
 LOG_FILE_ERR="/var/log/hysteria.error.log"
 
@@ -40,8 +40,20 @@ _detect_os() {
     if [ -n "$DISTRO_FAMILY" ]; then return 0; fi
     if [ -f /etc/os-release ]; then . /etc/os-release; if [[ "$ID" == "alpine" ]]; then DISTRO_FAMILY="alpine"; elif [[ "$ID" == "debian" || "$ID" == "ubuntu" || "$ID_LIKE" == "debian" || "$ID_LIKE" == "ubuntu" ]]; then DISTRO_FAMILY="debian"; else _log_error "不支持发行版 '$ID'."; exit 1; fi
     elif command -v apk >/dev/null 2>&1; then DISTRO_FAMILY="alpine"; elif command -v apt-get >/dev/null 2>&1; then DISTRO_FAMILY="debian"; else _log_error "无法确定发行版."; exit 1; fi
-    if [[ "$DISTRO_FAMILY" == "alpine" ]]; then PKG_INSTALL_CMD="apk add --no-cache"; PKG_UPDATE_CMD="apk update"; PKG_REMOVE_CMD="apk del"; INIT_SYSTEM="openrc"; SERVICE_CMD="service"; ENABLE_CMD_PREFIX="rc-update add"; ENABLE_CMD_SUFFIX="default"; SETCAP_DEPENDENCY_PKG="libcap"; REQUIRED_PKGS_OS_SPECIFIC="openrc"; CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_OPENRC";
-    elif [[ "$DISTRO_FAMILY" == "debian" ]]; then export DEBIAN_FRONTEND=noninteractive; PKG_INSTALL_CMD="apt-get install -y -q"; PKG_UPDATE_CMD="apt-get update -q"; PKG_REMOVE_CMD="apt-get remove -y -q"; INIT_SYSTEM="systemd"; SERVICE_CMD="systemctl"; ENABLE_CMD_PREFIX="systemctl enable"; ENABLE_CMD_SUFFIX=""; SETCAP_DEPENDENCY_PKG="libcap2-bin"; REQUIRED_PKGS_OS_SPECIFIC=""; CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_SYSTEMD"; fi
+    
+    if [[ "$DISTRO_FAMILY" == "alpine" ]]; then 
+        PKG_INSTALL_CMD="apk add --no-cache"; PKG_UPDATE_CMD="apk update"; PKG_REMOVE_CMD="apk del"
+        INIT_SYSTEM="openrc"; SERVICE_CMD="rc-service"; # Changed to rc-service for Alpine
+        ENABLE_CMD_PREFIX="rc-update add"; ENABLE_CMD_SUFFIX="default"
+        SETCAP_DEPENDENCY_PKG="libcap"; REQUIRED_PKGS_OS_SPECIFIC="openrc"
+        CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_OPENRC"
+    elif [[ "$DISTRO_FAMILY" == "debian" ]]; then 
+        export DEBIAN_FRONTEND=noninteractive; PKG_INSTALL_CMD="apt-get install -y -q"; PKG_UPDATE_CMD="apt-get update -q"; PKG_REMOVE_CMD="apt-get remove -y -q"
+        INIT_SYSTEM="systemd"; SERVICE_CMD="systemctl"; 
+        ENABLE_CMD_PREFIX="systemctl enable"; ENABLE_CMD_SUFFIX=""
+        SETCAP_DEPENDENCY_PKG="libcap2-bin"; REQUIRED_PKGS_OS_SPECIFIC=""
+        CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_SYSTEMD"
+    fi
 }
 
 _is_hysteria_installed() { _detect_os; if [ -f "$HYSTERIA_INSTALL_PATH" ] && [ -f "$HYSTERIA_CONFIG_FILE" ]; then if [ "$INIT_SYSTEM" == "systemd" ] && [ -f "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME" ]; then return 0; elif [ "$INIT_SYSTEM" == "openrc" ] && [ -f "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME" ]; then return 0; fi; fi; return 1; }
@@ -57,135 +69,52 @@ _install_dependencies() {
         
         if ! grep -q -E "$community_repo_active_pattern" "$repo_file"; then
             _log_info "Alpine community repository 未启用或被注释，尝试处理..."
-            if [ ! -w "$repo_file" ]; then
-                _log_error "无法写入 Alpine 仓库文件 $repo_file。"
-            else
-                _log_info "修改前 /etc/apk/repositories 内容:"
-                cat "$repo_file"
+            if [ ! -w "$repo_file" ]; then _log_error "无法写入 Alpine 仓库文件 $repo_file。"; else
+                _log_info "修改前 /etc/apk/repositories 内容:"; cat "$repo_file"
                 cp "$repo_file" "${repo_file}.bak_hy_$(date +%s)" 
-                
                 _log_info "尝试取消注释所有匹配的 community repository 行..."
-                # This sed command is designed to uncomment lines like:
-                # #http://dl-cdn.alpinelinux.org/alpine/v3.19/community
-                # or
-                # # http://dl-cdn.alpinelinux.org/alpine/v3.19/community
                 sed -i -E 's/^#[[:space:]]*([[:print:]]*\/alpine\/v[0-9.]+\/community)/\1/g' "$repo_file"
-                
-                if grep -q -E "$community_repo_active_pattern" "$repo_file"; then
-                    _log_success "已取消注释一个或多个 community repository。"
-                    alpine_repo_modified_by_script=true
-                else
-                    _log_warning "未找到可取消注释的 community repository 行，或取消注释失败。"
-                    if [ -f /etc/os-release ]; then
-                        . /etc/os-release 
+                if grep -q -E "$community_repo_active_pattern" "$repo_file"; then _log_success "已取消注释一个或多个 community repository。"; alpine_repo_modified_by_script=true;
+                else _log_warning "未找到可取消注释的 community repository 行，或取消注释失败。"
+                    if [ -f /etc/os-release ]; then . /etc/os-release 
                         local alpine_version_major_minor=$(echo "$VERSION_ID" | cut -d. -f1-2) 
                         if [ -n "$alpine_version_major_minor" ]; then
                             local community_line_to_add="http://dl-cdn.alpinelinux.org/alpine/v${alpine_version_major_minor}/community"
                             _log_info "尝试添加默认 community repository: $community_line_to_add"
-                            if ! grep -q -F "$community_line_to_add" "$repo_file"; then 
-                                echo "$community_line_to_add" >> "$repo_file"
-                                if grep -q -F "$community_line_to_add" "$repo_file"; then
-                                    _log_success "已添加 community repository。"
-                                    alpine_repo_modified_by_script=true
-                                else
-                                    _log_error "添加 community repository 后检查失败。"
-                                fi
-                            else
-                                _log_info "默认 community repository line ('$community_line_to_add') 已存在。"
-                            fi
-                        else
-                            _log_warning "无法从 /etc/os-release 获取 Alpine 版本号。"
-                        fi
-                    else
-                         _log_warning "/etc/os-release 文件未找到。"
-                    fi
+                            if ! grep -q -F "$community_line_to_add" "$repo_file"; then echo "$community_line_to_add" >> "$repo_file"; if grep -q -F "$community_line_to_add" "$repo_file"; then _log_success "已添加 community repository。"; alpine_repo_modified_by_script=true; else _log_error "添加 community repository 后检查失败。"; fi
+                            else _log_info "默认 community repository line ('$community_line_to_add') 已存在。"; fi
+                        else _log_warning "无法从 /etc/os-release 获取 Alpine 版本号。"; fi
+                    else _log_warning "/etc/os-release 文件未找到。"; fi
                 fi
-                _log_info "修改后 /etc/apk/repositories 内容:"
-                cat "$repo_file"
+                _log_info "修改后 /etc/apk/repositories 内容:"; cat "$repo_file"
             fi 
-            
-            if $alpine_repo_modified_by_script; then
-                _log_info "Alpine 仓库配置已修改，强制执行 apk update (显示输出)..."
-                if ! apk update; then 
-                     _log_error "修改仓库后执行 apk update 失败。qrencode 等包可能无法安装。"
-                else
-                     _log_success "修改仓库后 apk update 执行成功。"
-                fi
-            else
-                 _log_warning "脚本未修改 Alpine community repository (可能已启用或无需修改)。"
-            fi
-        else
-            _log_info "Alpine community repository 已启用。"
-        fi
-        _log_info "为 Alpine 执行最终 apk update (确保最新列表，显示输出)..."
-        if ! apk update; then 
-             _log_warning "Alpine apk update 失败 (可能是网络问题或已是最新)。"; 
-        fi
-        _log_info "尝试搜索 qrencode 相关包 (apk search -v qrencode)..." 
-        apk search -v qrencode 
-
-    elif [[ "$DISTRO_FAMILY" == "debian" ]]; then 
-        if ! $PKG_UPDATE_CMD >/dev/null; then
-            _log_warning "Debian/Ubuntu 更新列表失败。"; 
-        fi
-    fi
+            if $alpine_repo_modified_by_script; then _log_info "Alpine 仓库配置已修改，强制执行 apk update (显示输出)..."; if ! apk update; then _log_error "修改仓库后执行 apk update 失败。"; else _log_success "修改仓库后 apk update 执行成功。"; fi
+            else _log_warning "脚本未修改 Alpine community repository。"; fi
+        else _log_info "Alpine community repository 已启用。"; fi
+        _log_info "为 Alpine 执行最终 apk update (确保最新列表，显示输出)..."; if ! apk update; then _log_warning "Alpine apk update 失败。"; fi
+        _log_info "尝试搜索 qrencode 相关包 (apk search -v qrencode)..."; apk search -v qrencode 
+    elif [[ "$DISTRO_FAMILY" == "debian" ]]; then if ! $PKG_UPDATE_CMD >/dev/null; then _log_warning "Debian/Ubuntu 更新列表失败。"; fi; fi
     
-    # qrencode is handled specifically below for Alpine
     REQUIRED_PKGS_COMMON="wget curl git openssl lsof coreutils" 
-    if [[ "$DISTRO_FAMILY" == "debian" ]]; then # Add qrencode for Debian here
-        REQUIRED_PKGS_COMMON="$REQUIRED_PKGS_COMMON qrencode"
+    if [[ "$DISTRO_FAMILY" == "debian" ]]; then REQUIRED_PKGS_COMMON="$REQUIRED_PKGS_COMMON qrencode"; 
+    elif [[ "$DISTRO_FAMILY" == "alpine" ]]; then REQUIRED_PKGS_COMMON="$REQUIRED_PKGS_COMMON libqrencode-tools"; # Use correct package name for Alpine
     fi
-    REQUIRED_PKGS="$REQUIRED_PKGS_COMMON"
-    if [ -n "$REQUIRED_PKGS_OS_SPECIFIC" ]; then REQUIRED_PKGS="$REQUIRED_PKGS $REQUIRED_PKGS_OS_SPECIFIC"; fi
+    REQUIRED_PKGS="$REQUIRED_PKGS_COMMON"; if [ -n "$REQUIRED_PKGS_OS_SPECIFIC" ]; then REQUIRED_PKGS="$REQUIRED_PKGS $REQUIRED_PKGS_OS_SPECIFIC"; fi
     
-    if ! command -v realpath &>/dev/null && [[ "$DISTRO_FAMILY" == "debian" || "$DISTRO_FAMILY" == "alpine" ]]; then 
-        _log_info "确保 realpath 命令可用 (通过 coreutils)..."
-        if ! $PKG_INSTALL_CMD coreutils > /dev/null; then _log_warning "尝试安装/确保 coreutils 失败。"; fi
-        if ! command -v realpath &>/dev/null; then _log_error "realpath 命令在安装 coreutils 后仍然不可用。"; exit 1; fi
-    fi
+    if ! command -v realpath &>/dev/null && [[ "$DISTRO_FAMILY" == "debian" || "$DISTRO_FAMILY" == "alpine" ]]; then _log_info "确保 realpath 命令可用 (通过 coreutils)..."; if ! $PKG_INSTALL_CMD coreutils > /dev/null; then _log_warning "尝试安装/确保 coreutils 失败。"; fi; if ! command -v realpath &>/dev/null; then _log_error "realpath 命令在安装 coreutils 后仍然不可用。"; exit 1; fi; fi
     
-    for pkg_name_requested in $REQUIRED_PKGS; do 
+    for pkg in $REQUIRED_PKGS; do 
         installed=false
-        local pkg_to_install="$pkg_name_requested" 
-        
-        if [[ "$DISTRO_FAMILY" == "alpine" ]]; then 
-            if apk info -e "$pkg_to_install" &>/dev/null; then installed=true; fi
-        elif [[ "$DISTRO_FAMILY" == "debian" ]]; then 
-            if dpkg-query -W -f='${Status}' "$pkg_to_install" 2>/dev/null | grep -q "install ok installed"; then installed=true; fi; 
-        fi
-        
-        if $installed; then 
-            _log_info "$pkg_to_install 已安装。"
-        else 
-            _log_info "正在安装 $pkg_to_install (作为 $pkg_name_requested)..."
-            if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
-                if ! apk add --no-cache "$pkg_to_install"; then 
-                    _log_error "安装 $pkg_to_install 在 Alpine 上失败。请检查上面的 apk 输出。"
-                    exit 1
-                fi
-            elif ! $PKG_INSTALL_CMD "$pkg_to_install" > /dev/null; then 
-                _log_error "安装 $pkg_to_install 失败。请手动安装后重试。"
+        if [[ "$DISTRO_FAMILY" == "alpine" ]]; then if apk info -e "$pkg" &>/dev/null; then installed=true; fi
+        elif [[ "$DISTRO_FAMILY" == "debian" ]]; then if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then installed=true; fi; fi
+        if $installed; then _log_info "$pkg 已安装。"; 
+        else _log_info "正在安装 $pkg..."; 
+             if ! $PKG_INSTALL_CMD "$pkg"; then # Show output for all installs now
+                _log_error "安装 $pkg 失败。请检查上面的输出。"
                 exit 1
-            fi
+             fi
         fi
     done
-
-    # Explicitly install qrencode tools for Alpine
-    if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
-        local alpine_qrencode_tool_pkg="libqrencode-tools"
-        _log_info "Alpine: 正在检查并安装 $alpine_qrencode_tool_pkg (用于 qrencode 命令)..."
-        if ! apk info -e "$alpine_qrencode_tool_pkg" &>/dev/null; then
-            if ! apk add --no-cache "$alpine_qrencode_tool_pkg"; then
-                _log_error "安装 $alpine_qrencode_tool_pkg 在 Alpine 上失败。"
-                exit 1
-            else
-                _log_success "$alpine_qrencode_tool_pkg 已安装。"
-            fi
-        else
-            _log_info "$alpine_qrencode_tool_pkg 已安装。"
-        fi
-    fi
-
     _log_success "依赖包安装成功。" 
 }
 
@@ -342,7 +271,7 @@ EOF
         chmod 644 "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME"; $SERVICE_CMD daemon-reload
     elif [ "$INIT_SYSTEM" == "openrc" ]; then _log_info "创建OpenRC服务..."; cat > "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME" << EOF
 #!/sbin/openrc-run
-name="$HYSTERIA_SERVICE_NAME_OPENRC"; command="$HYSTERIA_INSTALL_PATH"; command_args="server --config $HYSTERIA_CONFIG_FILE"; pidfile="/var/run/\${name}.pid"; command_background="yes"; output_log="$LOG_FILE_OUT"; error_log="$LOG_FILE_ERR"
+name="$HYSTERIA_SERVICE_NAME_OPENRC"; command="$HYSTERIA_INSTALL_PATH"; command_args="server --config $HYSTERIA_CONFIG_FILE"; pidfile="/var/run/\${RC_SVCNAME}.pid"; command_background="yes"; output_log="$LOG_FILE_OUT"; error_log="$LOG_FILE_ERR" # Use RC_SVCNAME for pidfile
 depend() { need net; after firewall; }
 start_pre() { checkpath -f \$output_log -m 0644 \$RC_SVCNAME; checkpath -f \$error_log -m 0644 \$RC_SVCNAME; }
 start() { ebegin "Starting \$name"; start-stop-daemon --start --quiet --background --make-pidfile --pidfile \$pidfile --stdout \$output_log --stderr \$error_log --exec \$command -- \$command_args; eend \$?; }
@@ -377,7 +306,15 @@ _do_uninstall() {
     _log_info "移除Hysteria二进制: $HYSTERIA_INSTALL_PATH"; rm -f "$HYSTERIA_INSTALL_PATH"
     _log_info "移除Hysteria配置: $HYSTERIA_CONFIG_DIR"; rm -rf "$HYSTERIA_CONFIG_DIR"
     _log_info "移除Hysteria日志: $LOG_FILE_OUT, $LOG_FILE_ERR"; rm -f "$LOG_FILE_OUT" "$LOG_FILE_ERR"
-    if command -v qrencode &>/dev/null; then _log_info "尝试自动卸载 qrencode..."; if $PKG_REMOVE_CMD qrencode >/dev/null; then _log_success "qrencode 已卸载。"; else _log_warning "卸载 qrencode 失败。"; fi; fi
+    
+    local qrencode_pkg_name="qrencode"
+    if [[ "$DISTRO_FAMILY" == "alpine" ]]; then qrencode_pkg_name="libqrencode-tools"; fi
+    if command -v qrencode &>/dev/null || ([[ "$DISTRO_FAMILY" == "alpine" ]] && apk info -e "$qrencode_pkg_name" &>/dev/null) ; then 
+        _log_info "尝试自动卸载 $qrencode_pkg_name..."
+        if $PKG_REMOVE_CMD "$qrencode_pkg_name" >/dev/null; then _log_success "$qrencode_pkg_name 已卸载。"; 
+        else _log_warning "卸载 $qrencode_pkg_name 失败。"; fi
+    fi
+
     if [ -f "/usr/local/bin/$SCRIPT_COMMAND_NAME" ]; then _log_info "尝试自动移除管理命令 /usr/local/bin/$SCRIPT_COMMAND_NAME ..."; if rm -f "/usr/local/bin/$SCRIPT_COMMAND_NAME"; then _log_success "/usr/local/bin/$SCRIPT_COMMAND_NAME 已移除。"; else _log_error "移除 /usr/local/bin/$SCRIPT_COMMAND_NAME 失败。"; fi; fi
     _log_success "Hysteria 卸载完成。"
 }
