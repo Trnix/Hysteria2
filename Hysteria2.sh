@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.9" # Add 'file' command as a dependency
+SCRIPT_VERSION="1.6.0" # Add 'file' command as a dependency for all distros
 SCRIPT_DATE="2025-05-08" # Current date based on context
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -126,8 +126,7 @@ _install_dependencies() {
     
     _log_success "核心依赖包处理完成。"
 
-    # 依赖包安装后，进行关键命令的最终检查
-    local critical_commands=("pgrep" "file")
+    local critical_commands=("pgrep" "file") # 确保 'file' 命令也被检查
     for cmd in "${critical_commands[@]}"; do
         if ! command -v "$cmd" &>/dev/null; then
             _log_error "关键命令 '$cmd' 在依赖安装后仍未找到。"
@@ -280,14 +279,13 @@ _do_install() {
         _log_warning "正强制安装...";
         _log_info "强制重装前先停止现有服务..."
         _control_service "stop" 
-        if [ $? -ne 0 ] && $hysteria_was_installed_before_this_run; then # Check if stop command itself failed
+        if [ $? -ne 0 ] && $hysteria_was_installed_before_this_run; then 
              _log_error "无法停止现有的Hysteria服务（命令执行失败）。请手动停止后重试。"
              exit 1
         fi
-        # _ensure_service_stopped is now called within _control_service "stop"
     fi
 
-    _install_dependencies # This will now install 'file' and 'procps-ng'/'procps'
+    _install_dependencies 
     DEFAULT_MASQUERADE_URL="https://www.bing.com"; DEFAULT_PORT="34567"; DEFAULT_ACME_EMAIL="$(_generate_random_lowercase_string)@gmail.com"
     echo ""; _log_info "请选择 TLS 验证方式:"; echo "1. 自定义证书"; echo "2. ACME HTTP 验证"; _read_from_tty TLS_TYPE "选择 [1-2, 默认 1]: "; TLS_TYPE=${TLS_TYPE:-1}
     CERT_PATH=""; KEY_PATH=""; DOMAIN=""; SNI_VALUE=""; ACME_EMAIL=""
@@ -321,11 +319,11 @@ _do_install() {
     fi
 
     if $HY_DOWNLOAD_SUCCESS; then
-        if ! command -v file &>/dev/null; then # Check if 'file' command exists before using it
+        if ! command -v file &>/dev/null; then 
             _log_warning "'file' 命令未找到。跳过可执行文件类型检查。"
         elif ! file "$TMP_HY_DOWNLOAD" | grep -q "executable"; then 
             _log_error "下载的文件非可执行程序。请检查下载源或网络。"
-            _log_info "文件类型: $(file "$TMP_HY_DOWNLOAD")"
+            _log_info "文件类型: $(file "$TMP_HY_DOWNLOAD")" # This will still fail if 'file' cmd not found
             rm -f "$TMP_HY_DOWNLOAD"
             if $hysteria_was_installed_before_this_run; then 
                  _log_info "尝试重启旧版Hysteria服务..."
@@ -590,7 +588,7 @@ _control_service() {
             _ensure_root
             _log_info "启用Hysteria开机自启..."
             _log_info "执行命令: $ENABLE_CMD_PREFIX \"$service_name_to_manage\" $ENABLE_CMD_SUFFIX"
-            if "$ENABLE_CMD_PREFIX" "$service_name_to_manage" $ENABLE_CMD_SUFFIX; then
+            if "$ENABLE_CMD_PREFIX" "$service_name_to_manage" $ENABLE_CMD_SUFFIX; then # No redirection to see output
                 _log_success "已启用开机自启。"
             else
                 local exit_code=$?
@@ -604,7 +602,7 @@ _control_service() {
             _log_info "禁用Hysteria开机自启..."
             if [[ "$INIT_SYSTEM" == "systemd" ]]; then
                 _log_info "执行命令: $SERVICE_CMD disable \"$service_name_to_manage\""
-                if "$SERVICE_CMD" disable "$service_name_to_manage"; then
+                if "$SERVICE_CMD" disable "$service_name_to_manage"; then # No redirection
                      _log_success "已禁用开机自启。"
                 else
                     local exit_code=$?
@@ -614,7 +612,7 @@ _control_service() {
                 fi
             elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
                  _log_info "执行命令: rc-update del \"$service_name_to_manage\" default"
-                if rc-update del "$service_name_to_manage" default; then
+                if rc-update del "$service_name_to_manage" default; then # No redirection
                     _log_success "已禁用开机自启。"
                 else
                     local exit_code=$?
