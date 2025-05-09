@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.8" # Quieter package manager stdout, retain stderr for errors
+SCRIPT_VERSION="1.5.9" # Added feedback prompt after uninstall
 SCRIPT_DATE="2025-05-09"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -73,7 +73,7 @@ _is_hysteria_installed() { _detect_os; if [ -f "$HYSTERIA_INSTALL_PATH" ] && [ -
 
 _install_dependencies() {
     _log_info "更新包列表 (${DISTRO_FAMILY})...";
-    if ! $PKG_UPDATE_CMD >/dev/null; then # Suppress stdout, keep stderr
+    if ! $PKG_UPDATE_CMD >/dev/null; then 
         _log_error "更新包列表 (${PKG_UPDATE_CMD}) 失败。请检查上面可能显示的错误信息，以及您的网络和软件源配置。"
         exit 1
     fi
@@ -93,8 +93,8 @@ _install_dependencies() {
 
     if ! command -v realpath &>/dev/null && [[ "$DISTRO_FAMILY" == "debian" || "$DISTRO_FAMILY" == "alpine" ]]; then
         _log_info "核心工具 'realpath' 未找到, 尝试通过 'coreutils' 安装..."
-        if ! $PKG_INSTALL_CMD coreutils >/dev/null; then # Suppress stdout
-            _log_warning "尝试安装/确保 coreutils 失败。" # Stderr from coreutils install might show here
+        if ! $PKG_INSTALL_CMD coreutils >/dev/null; then 
+            _log_warning "尝试安装/确保 coreutils 失败。" 
         fi
         if ! command -v realpath &>/dev/null; then _log_error "realpath 命令在安装 coreutils 后仍然不可用。请检查您的系统。"; exit 1; fi
     fi
@@ -114,20 +114,16 @@ _install_dependencies() {
         _log_info "下列依赖包需要安装:$missing_pkgs"
         for pkg in $missing_pkgs; do
             _log_info "正在安装 $pkg..."
-            if ! $PKG_INSTALL_CMD "$pkg" >/dev/null; then # Suppress stdout
+            if ! $PKG_INSTALL_CMD "$pkg" >/dev/null; then 
                 _log_error "安装 $pkg 失败。请检查上面可能显示的错误信息，或手动运行安装命令查看。"
                 exit 1
             fi
-             # _log_success "$pkg 安装成功。" # Kept silent on individual success for cleaner output
         done
     else
         _log_info "所有基础依赖已满足。"
     fi
     _log_success "依赖包检查与安装完成。"
 }
-
-# ... (The rest of the script remains the same as v1.5.7) ...
-# ... (I will include the full script below for completeness) ...
 
 _generate_uuid() { local bytes=$(od -x -N 16 /dev/urandom | head -1 | awk '{OFS=""; $1=""; print}'); local byte7=${bytes:12:4}; byte7=$((0x${byte7} & 0x0fff | 0x4000)); byte7=$(printf "%04x" $byte7); local byte9=${bytes:20:4}; byte9=$((0x${byte9} & 0x3fff | 0x8000)); byte9=$(printf "%04x" $byte9); echo "${bytes:0:8}-${bytes:8:4}-${byte7}-${byte9}-${bytes:24:12}" | tr '[:upper:]' '[:lower:]'; }
 _generate_random_lowercase_string() { LC_ALL=C tr -dc 'a-z' < /dev/urandom | head -c 8; }
@@ -491,7 +487,7 @@ _do_uninstall() {
             fi
         fi
         _log_info "尝试自动卸载 qrencode (包: ${pkg_to_remove_name})..."
-        if $PKG_REMOVE_CMD "$pkg_to_remove_name" >/dev/null; then # Suppress output for remove
+        if $PKG_REMOVE_CMD "$pkg_to_remove_name" >/dev/null; 
             _log_success "${pkg_to_remove_name} 已卸载。"
         else
             _log_warning "卸载 ${pkg_to_remove_name} 失败 (可能未通过此名称安装或出错)。"
@@ -503,6 +499,10 @@ _do_uninstall() {
         if rm -f "/usr/local/bin/$SCRIPT_COMMAND_NAME"; then _log_success "/usr/local/bin/$SCRIPT_COMMAND_NAME 已移除。"; else _log_error "移除 /usr/local/bin/$SCRIPT_COMMAND_NAME 失败。"; fi
     fi
     _log_success "Hysteria 卸载完成。"
+    
+    echo ""
+    echo -e "${BLUE}信息: 脚本哪里需要完善? 请反馈${NC}"
+    echo -e "${BLUE}信息: 反馈问题) ${YELLOW}https://github.com/LeoJyenn/Hysteria2/issues${NC}"
 }
 
 _control_service() {
@@ -549,7 +549,7 @@ _control_service() {
                      local start_cmd_openrc="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME start"
                      cmd_output=$(eval "$start_cmd_openrc" 2>&1) 
                      cmd_exit_code=$?
-                elif [[ "$action" == "restart" && $cmd_exit_code -eq 0 && $(echo "$cmd_output" | grep -q "Stopping ${CURRENT_HYSTERIA_SERVICE_NAME}") && ! $(echo "$cmd_output" | grep -q "Starting ${CURRENT_HYSTERIA_SERVICE_NAME}") ]]; then # Handle cases where OpenRC 'restart' only stops if it doesn't auto-start
+                elif [[ "$action" == "restart" && $cmd_exit_code -eq 0 && $(echo "$cmd_output" | grep -q "Stopping ${CURRENT_HYSTERIA_SERVICE_NAME}") && ! $(echo "$cmd_output" | grep -q "Starting ${CURRENT_HYSTERIA_SERVICE_NAME}") ]]; then 
                      _log_info "服务已停止，现在尝试启动 (作为 restart 的一部分)..."
                      local start_cmd_openrc="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME start"
                      cmd_output=$(eval "$start_cmd_openrc" 2>&1)
@@ -643,8 +643,7 @@ _change_config_interactive() {
     if [ "$NEW_PASSWORD" != "$CURRENT_PASSWORD_RAW" ]; then _log_info "更改密码..."; awk -v new_pass="$NEW_PASSWORD" 'BEGIN{pb=0} /^auth:/{pb=1;print;next} pb&&/password:/{print "  password: " new_pass;pb=0;next} pb&&NF>0&&!/^[[:space:]]/{pb=0} {print}' "$HYSTERIA_CONFIG_FILE" > "$temp_config_file" && mv "$temp_config_file" "$HYSTERIA_CONFIG_FILE" || { _log_error "更改密码失败"; cat "$CONFIG_BACKUP_FILE" > "$HYSTERIA_CONFIG_FILE"; rm -f "$temp_config_file" "$CONFIG_BACKUP_FILE"; return 1; }; fi
     if [ "$NEW_MASQUERADE" != "$CURRENT_MASQUERADE" ]; then _log_info "更改伪装URL '$CURRENT_MASQUERADE' -> '$NEW_MASQUERADE'..."; awk -v new_url="$NEW_MASQUERADE" 'BEGIN{mb=0} /^masquerade:/{mb=1;print;next} mb&&/url:/{print "    url: " new_url;mb=0;next} mb&&NF>0&&!/^[[:space:]]/{mb=0} {print}' "$HYSTERIA_CONFIG_FILE" > "$temp_config_file" && mv "$temp_config_file" "$HYSTERIA_CONFIG_FILE" || { _log_error "更改伪装URL失败"; cat "$CONFIG_BACKUP_FILE" > "$HYSTERIA_CONFIG_FILE"; rm -f "$temp_config_file" "$CONFIG_BACKUP_FILE"; return 1; }; fi
     
-    # Ensure temp_config_file is removed if it was created by any of the change blocks
-    if [ -f "$temp_config_file" ]; then rm -f "$temp_config_file"; fi
+    if [ -f "$temp_config_file" ]; then rm -f "$temp_config_file"; fi # Ensure temp file is removed
     
     if $config_changed; then
         _log_success "配置更新。重启服务以应用更改...";
