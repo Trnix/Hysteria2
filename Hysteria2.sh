@@ -3,10 +3,10 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.7" # Text file busy fix and robust stop
+SCRIPT_VERSION="1.5.8" # Fix pgrep dependency for Alpine (use procps-ng)
 SCRIPT_DATE="2025-05-08"
 
-HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
+HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
 
 HYSTERIA_INSTALL_PATH="/usr/local/bin/hysteria"
 HYSTERIA_CONFIG_DIR="/etc/hysteria"
@@ -45,13 +45,13 @@ _detect_os() {
         PKG_INSTALL_CMD="apk add --no-cache"; PKG_UPDATE_CMD="apk update"; PKG_REMOVE_CMD="apk del"
         INIT_SYSTEM="openrc"; SERVICE_CMD="rc-service";
         ENABLE_CMD_PREFIX="rc-update add"; ENABLE_CMD_SUFFIX="default"
-        SETCAP_DEPENDENCY_PKG="libcap"; REQUIRED_PKGS_OS_SPECIFIC="openrc pgrep" # Added pgrep
+        SETCAP_DEPENDENCY_PKG="libcap"; REQUIRED_PKGS_OS_SPECIFIC="openrc procps-ng" # 使用 procps-ng 替代 pgrep
         CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_OPENRC"
     elif [[ "$DISTRO_FAMILY" == "debian" ]]; then
         export DEBIAN_FRONTEND=noninteractive; PKG_INSTALL_CMD="apt-get install -y -q"; PKG_UPDATE_CMD="apt-get update -q"; PKG_REMOVE_CMD="apt-get remove -y -q"
         INIT_SYSTEM="systemd"; SERVICE_CMD="systemctl";
         ENABLE_CMD_PREFIX="systemctl enable"; ENABLE_CMD_SUFFIX=""
-        SETCAP_DEPENDENCY_PKG="libcap2-bin"; REQUIRED_PKGS_OS_SPECIFIC="procps" # procps provides pgrep
+        SETCAP_DEPENDENCY_PKG="libcap2-bin"; REQUIRED_PKGS_OS_SPECIFIC="procps" # procps 提供 pgrep
         CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_SYSTEMD"
     fi
 }
@@ -96,29 +96,20 @@ _install_dependencies() {
 
     local qrencode_pkg_name="qrencode"
     if [[ "$DISTRO_FAMILY" == "alpine" ]]; then qrencode_pkg_name="libqrencode-tools"; fi
-    # pgrep is now part of REQUIRED_PKGS_OS_SPECIFIC set in _detect_os
+    
     REQUIRED_PKGS_COMMON="wget curl git openssl lsof coreutils ${qrencode_pkg_name}"
 
     REQUIRED_PKGS="$REQUIRED_PKGS_COMMON"
+    # REQUIRED_PKGS_OS_SPECIFIC (例如 procps, procps-ng) 会在这里被加入
     if [ -n "$REQUIRED_PKGS_OS_SPECIFIC" ]; then REQUIRED_PKGS="$REQUIRED_PKGS $REQUIRED_PKGS_OS_SPECIFIC"; fi
 
-    if ! command -v realpath &>/dev/null && [[ "$DISTRO_FAMILY" == "debian" || "$DISTRO_FAMILY" == "alpine" ]]; then _log_info "确保 realpath 命令可用 (通过 coreutils)..."; if ! $PKG_INSTALL_CMD coreutils > /dev/null; then _log_warning "尝试安装/确保 coreutils 失败。"; fi; if ! command -v realpath &>/dev/null; then _log_error "realpath 命令在安装 coreutils 后仍然不可用。"; exit 1; fi; fi
-    # Ensure pgrep is available for _ensure_service_stopped
-    if ! command -v pgrep &>/dev/null; then
-        _log_info "确保 pgrep 命令可用..."
-        local pgrep_pkg="procps" # For Debian/Ubuntu
-        if [[ "$DISTRO_FAMILY" == "alpine" ]]; then pgrep_pkg="pgrep"; fi # Alpine has pgrep as a separate package or part of busybox-extras often.
-                                                                      # We add 'pgrep' to REQUIRED_PKGS_OS_SPECIFIC for Alpine.
-        if ! $PKG_INSTALL_CMD "$pgrep_pkg" > /dev/null; then
-             _log_warning "尝试安装/确保 $pgrep_pkg (提供 pgrep) 失败。"
-        fi
-        if ! command -v pgrep &>/dev/null; then
-            _log_error "pgrep 命令在安装 $pgrep_pkg 后仍然不可用。无法继续。"
-            exit 1
-        fi
+    if ! command -v realpath &>/dev/null && [[ "$DISTRO_FAMILY" == "debian" || "$DISTRO_FAMILY" == "alpine" ]]; then
+        _log_info "确保 realpath 命令可用 (通过 coreutils)..."
+        if ! $PKG_INSTALL_CMD coreutils > /dev/null; then _log_warning "尝试安装/确保 coreutils 失败。"; fi
+        if ! command -v realpath &>/dev/null; then _log_error "realpath 命令在安装 coreutils 后仍然不可用。"; exit 1; fi
     fi
-
-
+    
+    # 主要依赖安装循环
     for pkg in $REQUIRED_PKGS; do
         installed=false
         if [[ "$DISTRO_FAMILY" == "alpine" ]]; then if apk info -e "$pkg" &>/dev/null; then installed=true; fi
@@ -134,8 +125,26 @@ _install_dependencies() {
             fi
         fi
     done
-    _log_success "依赖包安装成功。"
+    
+    _log_success "核心依赖包处理完成。"
+
+    # 对 pgrep 命令的最终检查
+    if ! command -v pgrep &>/dev/null; then
+        _log_error "关键命令 pgrep 在依赖安装后仍未找到。"
+        _log_warning "pgrep 用于确保服务在更新或卸载前已正确停止。"
+        if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
+            _log_warning "请确认 'procps-ng' 包已正确安装且 pgrep 在您的 PATH中: sudo apk add procps-ng"
+        elif [[ "$DISTRO_FAMILY" == "debian" ]]; then
+            _log_warning "请确认 'procps' 包已正确安装且 pgrep 在您的 PATH中: sudo apt install procps"
+        fi
+        exit 1
+    else
+        _log_info "pgrep 命令可用。"
+    fi
+
+    _log_success "所有依赖包安装成功。"
 }
+
 
 _generate_uuid() { local bytes=$(od -x -N 16 /dev/urandom | head -1 | awk '{OFS=""; $1=""; print}'); local byte7=${bytes:12:4}; byte7=$((0x${byte7} & 0x0fff | 0x4000)); byte7=$(printf "%04x" $byte7); local byte9=${bytes:20:4}; byte9=$((0x${byte9} & 0x3fff | 0x8000)); byte9=$(printf "%04x" $byte9); echo "${bytes:0:8}-${bytes:8:4}-${byte7}-${byte9}-${bytes:24:12}" | tr '[:upper:]' '[:lower:]'; }
 _generate_random_lowercase_string() { LC_ALL=C tr -dc 'a-z' < /dev/urandom | head -c 8; }
@@ -219,7 +228,6 @@ _display_link_and_qrcode() {
     echo ""
 }
 
-# 新增：确保服务已停止的辅助函数
 _ensure_service_stopped() {
     local service_exec_path="$1"
     local service_display_name="$2"
@@ -228,36 +236,31 @@ _ensure_service_stopped() {
 
     if ! command -v pgrep &> /dev/null; then
         _log_warning "pgrep 命令未找到，无法精确检查服务是否停止。将仅依赖服务管理命令。"
-        # 即使 pgrep 不可用，也返回成功，让后续操作继续，只是检查不够精确
-        # 或者可以考虑在这里返回错误并终止，取决于严格程度
-        return 0
+        return 0 
     fi
 
     _log_info "确保 ${service_display_name} 服务已完全停止..."
-    # 循环检查进程是否存在
     while pgrep -f "$service_exec_path" >/dev/null 2>&1 && [ "$count" -lt "$max_wait_seconds" ]; do
         count=$((count + 1))
         _log_info "等待 ${service_display_name} 进程 (${service_exec_path}) 退出... (${count}/${max_wait_seconds})"
         sleep 1
-        # 在等待中途可以尝试再次发送停止命令，但要小心避免无限循环
-        if [ "$count" -eq 5 ]; then # 例如，在等待5秒后
+        if [ "$count" -eq 5 ]; then 
             _log_info "${service_display_name} 服务仍在运行，尝试再次发送停止命令..."
-            _control_service "stop" # 注意：这会递归调用，但有 _is_hysteria_installed 保护
+            _control_service "stop" 
         fi
     done
 
     if pgrep -f "$service_exec_path" >/dev/null 2>&1; then
         _log_error "${service_display_name} 服务未能在 ${max_wait_seconds} 秒内停止。"
         _log_warning "以下相关进程仍在运行："
-        pgrep -af "$service_exec_path" # 显示仍在运行的进程
+        pgrep -af "$service_exec_path" 
         _log_warning "您可能需要手动结束这些进程 (例如使用 kill 命令)。"
-        return 1 # 表示停止失败
+        return 1
     else
         _log_success "${service_display_name} 服务已确认停止。"
-        return 0 # 表示成功停止
+        return 0
     fi
 }
-
 
 _do_install() {
     _ensure_root; _detect_os
@@ -270,18 +273,21 @@ _do_install() {
         fi
         _log_warning "正强制安装...";
         _log_info "强制重装前先停止现有服务..."
-        _control_service "stop"
-        if ! _ensure_service_stopped "$HYSTERIA_INSTALL_PATH" "Hysteria"; then
+        _control_service "stop" # This will call _ensure_service_stopped internally for 'stop' action
+                                # So, we might not need to call _ensure_service_stopped explicitly again right after this,
+                                # if _control_service "stop" is robust enough.
+                                # Let's rely on _control_service("stop")'s own _ensure_service_stopped logic.
+                                # If it fails, it will return non-zero.
+        if [ $? -ne 0 ] && $hysteria_was_installed_before_this_run; then
              _log_error "无法停止现有的Hysteria服务。请手动停止后重试。"
              exit 1
         fi
     fi
 
-    _install_dependencies # 确保 pgrep 已安装
+    _install_dependencies
     DEFAULT_MASQUERADE_URL="https://www.bing.com"; DEFAULT_PORT="34567"; DEFAULT_ACME_EMAIL="$(_generate_random_lowercase_string)@gmail.com"
     echo ""; _log_info "请选择 TLS 验证方式:"; echo "1. 自定义证书"; echo "2. ACME HTTP 验证"; _read_from_tty TLS_TYPE "选择 [1-2, 默认 1]: "; TLS_TYPE=${TLS_TYPE:-1}
     CERT_PATH=""; KEY_PATH=""; DOMAIN=""; SNI_VALUE=""; ACME_EMAIL=""
-    # ... (TLS setup logic from your original script, no changes needed here)
     case $TLS_TYPE in 1) _log_info "--- 自定义证书模式 ---"; _read_from_tty USER_CERT_PATH "证书路径(.crt/.pem)(留空则自签): ";
         if [ -z "$USER_CERT_PATH" ]; then _log_info "将生成自签名证书。"; if ! command -v openssl &>/dev/null; then _log_error "openssl未安装 ($PKG_INSTALL_CMD openssl)"; exit 1; fi; _read_from_tty SELF_SIGN_SNI "自签名证书SNI(默认www.bing.com): "; SELF_SIGN_SNI=${SELF_SIGN_SNI:-"www.bing.com"}; SNI_VALUE="$SELF_SIGN_SNI"; mkdir -p "$HYSTERIA_CERTS_DIR"; CERT_PATH="$HYSTERIA_CERTS_DIR/server.crt"; KEY_PATH="$HYSTERIA_CERTS_DIR/server.key"; _log_info "正生成自签证书(CN=$SNI_VALUE)..."; if ! openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) -keyout "$KEY_PATH" -out "$CERT_PATH" -subj "/CN=$SNI_VALUE" -days 36500; then _log_error "自签证书生成失败!"; exit 1; fi; _log_success "自签证书已生成: $CERT_PATH, $KEY_PATH";
         else _log_info "提供证书路径: $USER_CERT_PATH"; _read_from_tty USER_KEY_PATH "私钥路径(.key/.pem): "; if [ -z "$USER_KEY_PATH" ]; then _log_error "私钥路径不能为空。"; exit 1; fi; TMP_CERT_PATH=$(realpath "$USER_CERT_PATH" 2>/dev/null); TMP_KEY_PATH=$(realpath "$USER_KEY_PATH" 2>/dev/null); if [ ! -f "$TMP_CERT_PATH" ]; then _log_error "证书'$USER_CERT_PATH'('$TMP_CERT_PATH')无效."; exit 1; fi; if [ ! -f "$TMP_KEY_PATH" ]; then _log_error "私钥'$USER_KEY_PATH'('$TMP_KEY_PATH')无效."; exit 1; fi; CERT_PATH="$TMP_CERT_PATH"; KEY_PATH="$TMP_KEY_PATH"; SNI_VALUE=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$CERT_PATH" 2>/dev/null | sed -n 's/.*CN=\([^,]*\).*/\1/p'); if [ -z "$SNI_VALUE" ]; then SNI_VALUE=$(openssl x509 -noout -subject -in "$CERT_PATH" 2>/dev/null | sed -n 's/.*CN ?= ?\([^,]*\).*/\1/p' | head -n 1 | sed 's/^[ \t]*//;s/[ \t]*$//'); fi; if [ -z "$SNI_VALUE" ]; then SNI_VALUE=$(openssl x509 -noout -text -in "$CERT_PATH" 2>/dev/null | grep 'DNS:' | head -n 1 | sed 's/.*DNS://' | tr -d ' ' | cut -d, -f1); fi; if [ -z "$SNI_VALUE" ]; then _read_from_tty MANUAL_SNI "无法提取SNI, 请手动输入: "; if [ -z "$MANUAL_SNI" ]; then _log_error "SNI不能为空!"; exit 1; fi; SNI_VALUE="$MANUAL_SNI"; else _log_info "提取到SNI: $SNI_VALUE"; fi; fi;;
@@ -297,7 +303,7 @@ _do_install() {
     _log_info "下载Hysteria...";
     ARCH=$(uname -m); case ${ARCH} in x86_64) HYSTERIA_ARCH="amd64";; aarch64) HYSTERIA_ARCH="arm64";; armv7l) HYSTERIA_ARCH="arm";; *) _log_error "不支持架构: ${ARCH}"; exit 1;; esac
 
-    TMP_HY_DOWNLOAD=$(mktemp) # 下载到临时文件
+    TMP_HY_DOWNLOAD=$(mktemp) 
     HY_DOWNLOAD_SUCCESS=false
     _log_info "尝试从GitHub下载: https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HYSTERIA_ARCH}"
     if wget -qO "$TMP_HY_DOWNLOAD" "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HYSTERIA_ARCH}"; then
@@ -312,11 +318,11 @@ _do_install() {
     fi
 
     if $HY_DOWNLOAD_SUCCESS; then
-        if ! file "$TMP_HY_DOWNLOAD" | grep -q "executable"; then # 检查下载的文件是否为可执行文件
+        if ! file "$TMP_HY_DOWNLOAD" | grep -q "executable"; then 
             _log_error "下载的文件非可执行程序。请检查下载源或网络。"
             _log_info "文件类型: $(file "$TMP_HY_DOWNLOAD")"
             rm -f "$TMP_HY_DOWNLOAD"
-            if $hysteria_was_installed_before_this_run; then # 如果之前安装过，尝试恢复旧服务
+            if $hysteria_was_installed_before_this_run; then 
                  _log_info "尝试重启旧版Hysteria服务..."
                  _control_service "start"
             fi
@@ -324,13 +330,12 @@ _do_install() {
         fi
 
         _log_info "准备替换Hysteria二进制文件...";
-        # 如果之前Hysteria已安装，再次确保服务已停止，因为下载可能需要时间
-        if $hysteria_was_installed_before_this_run; then
-            _log_info "再次确认Hysteria服务已停止..."
-            _control_service "stop"
-            if ! _ensure_service_stopped "$HYSTERIA_INSTALL_PATH" "Hysteria"; then
+        if $hysteria_was_installed_before_this_run; then # If reinstalling, ensure service is stopped before mv
+            _log_info "再次确认Hysteria服务已停止 (强制安装前)..."
+            _control_service "stop" # This call now internally uses _ensure_service_stopped
+            if [ $? -ne 0 ]; then # Check if stop failed
                 _log_error "无法在替换文件前停止Hysteria服务。请手动停止后重试。"
-                rm -f "$TMP_HY_DOWNLOAD" # 清理下载的临时文件
+                rm -f "$TMP_HY_DOWNLOAD" 
                 exit 1
             fi
         fi
@@ -347,9 +352,10 @@ _do_install() {
             fi
             exit 1
         fi
+    else # HY_DOWNLOAD_SUCCESS is false - this case should have been caught by exit 1 above. Defensive.
+        _log_error "Hysteria 下载未知错误。"; rm -f "$TMP_HY_DOWNLOAD"; exit 1;
     fi
-    #确保 rm -f "$TMP_HY_DOWNLOAD" 在成功 mv 后也被调用，或者 mv 本身就会移除源文件（如果同文件系统）
-    #如果 mv 失败，TMP_HY_DOWNLOAD 会保留，上面有日志提示
+    rm -f "$TMP_HY_DOWNLOAD" # Clean up temp file if mv was successful
 
     if [ "$TLS_TYPE" -eq 2 ]; then
          _log_info "设置cap_net_bind_service权限(ACME)...";
@@ -467,10 +473,9 @@ _do_uninstall() {
     if [[ "$confirm_uninstall" != "y" && "$confirm_uninstall" != "Y" ]]; then _log_info "卸载取消。"; exit 0; fi
 
     _log_info "停止Hysteria服务...";
-    _control_service "stop"
-    if ! _ensure_service_stopped "$HYSTERIA_INSTALL_PATH" "Hysteria"; then # 确保服务已停止
+    _control_service "stop" # This call will use _ensure_service_stopped
+    if [ $? -ne 0 ]; then 
         _log_warning "未能完全停止Hysteria服务，但仍将继续卸载。"
-        # 可以选择在这里退出，或者给用户提示后继续
     fi
 
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "禁用systemd服务..."; $SERVICE_CMD disable "$CURRENT_HYSTERIA_SERVICE_NAME" >/dev/null 2>&1; _log_info "移除systemd服务文件..."; rm -f "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME"; find /etc/systemd/system/ -name "$CURRENT_HYSTERIA_SERVICE_NAME" -delete; $SERVICE_CMD daemon-reload; $SERVICE_CMD reset-failed "$CURRENT_HYSTERIA_SERVICE_NAME" >/dev/null 2>&1 || true
@@ -497,8 +502,7 @@ _control_service() {
 
     if [[ "$action" == "start" || "$action" == "stop" || "$action" == "restart" || "$action" == "status" ]]; then
         if ! _is_hysteria_installed; then
-            # 对于 stop 操作，即使 hysteria 未完全安装（比如只剩下服务文件），也尝试执行
-            if [[ "$action" != "stop" ]]; then
+            if [[ "$action" != "stop" ]]; then # Allow 'stop' to proceed even if not fully installed, to try and clean up
                 _log_error "Hysteria未安装或服务未配置。请用'${SCRIPT_COMMAND_NAME} install'安装。"
                 return 1
             fi
@@ -507,6 +511,7 @@ _control_service() {
 
     local cmd_to_run_array
     local log_cmd_str
+    local cmd_exec_result=0
 
     case "$action" in
         start|stop|restart)
@@ -522,37 +527,30 @@ _control_service() {
 
             if [[ "$INIT_SYSTEM" == "systemd" && "$action" == "stop" ]] && ! "$SERVICE_CMD" is-active --quiet "$service_name_to_manage"; then
                 _log_info "服务($service_name_to_manage)已停止(Systemd检测)。"
-                return 0 # 明确返回0，因为服务已停止
+                # If ensuring stopped is desired even here, call _ensure_service_stopped
+                # For now, trust systemd's 'is-active' for this specific early exit.
+                return 0 
             fi
-
-            # 对于OpenRC的stop，即使服务不存在或已停止，rc-service <service> stop 通常返回0
-            # 所以主要依赖后续的 _ensure_service_stopped (如果适用)
             
-            local cmd_success=false
-            if "${cmd_to_run_array[@]}"; then
-                cmd_success=true
-            else
-                # 即使命令失败 (例如 OpenRC stop 一个不存在的服务时)，也可能不是严重错误
-                # 依赖后续检查
-                _log_warning "命令 '$log_cmd_str' 执行返回非0状态码。"
-            fi
+            "${cmd_to_run_array[@]}"
+            cmd_exec_result=$?
 
             if [[ "$action" == "stop" ]]; then
-                # 对于 stop 操作，命令执行后（无论成功与否），都调用 _ensure_service_stopped
-                # _ensure_service_stopped 会处理 pgrep 检查
-                # 如果 _ensure_service_stopped 失败，它会返回 1
-                _log_info "在 stop 操作后，调用 _ensure_service_stopped 进行确认..."
+                _log_info "在 'stop' 操作后，调用 _ensure_service_stopped 进行确认..."
                 if _ensure_service_stopped "$HYSTERIA_INSTALL_PATH" "Hysteria"; then
                     _log_success "操作 'stop' 完成且服务已确认停止。"
-                    return 0
+                    return 0 # Success for stop
                 else
                     _log_error "操作 'stop' 后服务未能确认停止。"
-                    return 1
+                    return 1 # Failure for stop
                 fi
-            elif $cmd_success; then # 对于 start, restart
+            fi
+
+            # For start/restart
+            if [ $cmd_exec_result -eq 0 ]; then
                 _log_success "操作'$action'成功。"
                 if [[ "$action" == "start" || "$action" == "restart" ]]; then
-                    sleep 1
+                    sleep 1 # Give service a moment to come up
                     local status_cmd_array
                     if [[ "$INIT_SYSTEM" == "openrc" ]]; then
                         status_cmd_array=("$SERVICE_CMD" "$service_name_to_manage" "status")
@@ -561,9 +559,18 @@ _control_service() {
                     fi
                     "${status_cmd_array[@]}" 2>/dev/null | head -n 5 || "${status_cmd_array[@]}"
                 fi
-            else # start, restart 失败
-                _log_error "操作'$action'失败。"
-                # ... (日志输出如前) ...
+                return 0
+            else
+                _log_error "操作'$action'失败 (命令 '$log_cmd_str' 返回码: $cmd_exec_result)。"
+                _log_warning "请检查日志:"
+                echo "  输出: tail -n 30 $LOG_FILE_OUT"
+                echo "  错误: tail -n 30 $LOG_FILE_ERR"
+                if [ "$INIT_SYSTEM" == "systemd" ]; then
+                    echo "  Systemd状态: $SERVICE_CMD status $service_name_to_manage"
+                    echo "  Systemd日志: journalctl -u $service_name_to_manage -n 20 --no-pager"
+                elif [ "$INIT_SYSTEM" == "openrc" ]; then
+                    echo "  OpenRC状态: $SERVICE_CMD $service_name_to_manage status"
+                fi
                 return 1
             fi
             ;;
@@ -699,18 +706,17 @@ _update_hysteria_binary() {
     fi
 
     _log_info "准备替换...";
-    _control_service "stop"
-    if ! _ensure_service_stopped "$HYSTERIA_INSTALL_PATH" "Hysteria"; then
+    _control_service "stop" # This will internally call _ensure_service_stopped
+    if [ $? -ne 0 ]; then   # Check the return status of _control_service "stop"
         _log_error "无法停止Hysteria服务以进行更新。"
         rm -f "$TMP_HY_DOWNLOAD"
         return 1
     fi
+    # If _control_service "stop" succeeded, _ensure_service_stopped also succeeded.
 
     if mv "$TMP_HY_DOWNLOAD" "$HYSTERIA_INSTALL_PATH"; then
         _log_success "Hysteria已更新至 ${DOWNLOADED_VER:-latest}。"
-        # 检查是否需要重新应用setcap (例如在ACME模式下)
-        # 假设如果之前有cap_net_bind_service，那么更新后也应该有
-        # 一个更简单的方法是检查配置文件中是否有acme部分
+        rm -f "$TMP_HY_DOWNLOAD" # Clean up temp file after successful move
         if grep -q '^\s*acme:' "$HYSTERIA_CONFIG_FILE"; then
             _log_info "检测到ACME配置，尝试重应用setcap权限...";
             if command -v setcap &>/dev/null; then
