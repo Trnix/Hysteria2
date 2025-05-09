@@ -3,10 +3,10 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.8" # Fix pgrep dependency for Alpine (use procps-ng)
-SCRIPT_DATE="2025-05-08"
+SCRIPT_VERSION="1.5.9" # Add 'file' command as a dependency
+SCRIPT_DATE="2025-05-08" # Current date based on context
 
-HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
+HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
 
 HYSTERIA_INSTALL_PATH="/usr/local/bin/hysteria"
 HYSTERIA_CONFIG_DIR="/etc/hysteria"
@@ -45,13 +45,13 @@ _detect_os() {
         PKG_INSTALL_CMD="apk add --no-cache"; PKG_UPDATE_CMD="apk update"; PKG_REMOVE_CMD="apk del"
         INIT_SYSTEM="openrc"; SERVICE_CMD="rc-service";
         ENABLE_CMD_PREFIX="rc-update add"; ENABLE_CMD_SUFFIX="default"
-        SETCAP_DEPENDENCY_PKG="libcap"; REQUIRED_PKGS_OS_SPECIFIC="openrc procps-ng" # 使用 procps-ng 替代 pgrep
+        SETCAP_DEPENDENCY_PKG="libcap"; REQUIRED_PKGS_OS_SPECIFIC="openrc procps-ng file" # Added 'file'
         CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_OPENRC"
     elif [[ "$DISTRO_FAMILY" == "debian" ]]; then
         export DEBIAN_FRONTEND=noninteractive; PKG_INSTALL_CMD="apt-get install -y -q"; PKG_UPDATE_CMD="apt-get update -q"; PKG_REMOVE_CMD="apt-get remove -y -q"
         INIT_SYSTEM="systemd"; SERVICE_CMD="systemctl";
         ENABLE_CMD_PREFIX="systemctl enable"; ENABLE_CMD_SUFFIX=""
-        SETCAP_DEPENDENCY_PKG="libcap2-bin"; REQUIRED_PKGS_OS_SPECIFIC="procps" # procps 提供 pgrep
+        SETCAP_DEPENDENCY_PKG="libcap2-bin"; REQUIRED_PKGS_OS_SPECIFIC="procps file" # Added 'file'
         CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_SYSTEMD"
     fi
 }
@@ -100,7 +100,6 @@ _install_dependencies() {
     REQUIRED_PKGS_COMMON="wget curl git openssl lsof coreutils ${qrencode_pkg_name}"
 
     REQUIRED_PKGS="$REQUIRED_PKGS_COMMON"
-    # REQUIRED_PKGS_OS_SPECIFIC (例如 procps, procps-ng) 会在这里被加入
     if [ -n "$REQUIRED_PKGS_OS_SPECIFIC" ]; then REQUIRED_PKGS="$REQUIRED_PKGS $REQUIRED_PKGS_OS_SPECIFIC"; fi
 
     if ! command -v realpath &>/dev/null && [[ "$DISTRO_FAMILY" == "debian" || "$DISTRO_FAMILY" == "alpine" ]]; then
@@ -109,7 +108,6 @@ _install_dependencies() {
         if ! command -v realpath &>/dev/null; then _log_error "realpath 命令在安装 coreutils 后仍然不可用。"; exit 1; fi
     fi
     
-    # 主要依赖安装循环
     for pkg in $REQUIRED_PKGS; do
         installed=false
         if [[ "$DISTRO_FAMILY" == "alpine" ]]; then if apk info -e "$pkg" &>/dev/null; then installed=true; fi
@@ -128,21 +126,29 @@ _install_dependencies() {
     
     _log_success "核心依赖包处理完成。"
 
-    # 对 pgrep 命令的最终检查
-    if ! command -v pgrep &>/dev/null; then
-        _log_error "关键命令 pgrep 在依赖安装后仍未找到。"
-        _log_warning "pgrep 用于确保服务在更新或卸载前已正确停止。"
-        if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
-            _log_warning "请确认 'procps-ng' 包已正确安装且 pgrep 在您的 PATH中: sudo apk add procps-ng"
-        elif [[ "$DISTRO_FAMILY" == "debian" ]]; then
-            _log_warning "请确认 'procps' 包已正确安装且 pgrep 在您的 PATH中: sudo apt install procps"
+    # 依赖包安装后，进行关键命令的最终检查
+    local critical_commands=("pgrep" "file")
+    for cmd in "${critical_commands[@]}"; do
+        if ! command -v "$cmd" &>/dev/null; then
+            _log_error "关键命令 '$cmd' 在依赖安装后仍未找到。"
+            _log_warning "'$cmd' 是脚本正常运行所必需的。"
+            local pkg_suggestion="'$cmd' (请根据您的系统查找对应的包名)"
+            if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
+                if [[ "$cmd" == "pgrep" ]]; then pkg_suggestion="'procps-ng'"; fi
+                if [[ "$cmd" == "file" ]]; then pkg_suggestion="'file'"; fi
+                _log_warning "在 Alpine 上, 请尝试手动安装: sudo apk add $pkg_suggestion"
+            elif [[ "$DISTRO_FAMILY" == "debian" ]]; then
+                if [[ "$cmd" == "pgrep" ]]; then pkg_suggestion="'procps'"; fi
+                if [[ "$cmd" == "file" ]]; then pkg_suggestion="'file'"; fi
+                 _log_warning "在 Debian/Ubuntu 上, 请尝试手动安装: sudo apt install $pkg_suggestion"
+            fi
+            exit 1
+        else
+            _log_info "命令 '$cmd' 可用。"
         fi
-        exit 1
-    else
-        _log_info "pgrep 命令可用。"
-    fi
+    done
 
-    _log_success "所有依赖包安装成功。"
+    _log_success "所有依赖包安装成功且关键命令可用。"
 }
 
 
@@ -273,18 +279,15 @@ _do_install() {
         fi
         _log_warning "正强制安装...";
         _log_info "强制重装前先停止现有服务..."
-        _control_service "stop" # This will call _ensure_service_stopped internally for 'stop' action
-                                # So, we might not need to call _ensure_service_stopped explicitly again right after this,
-                                # if _control_service "stop" is robust enough.
-                                # Let's rely on _control_service("stop")'s own _ensure_service_stopped logic.
-                                # If it fails, it will return non-zero.
-        if [ $? -ne 0 ] && $hysteria_was_installed_before_this_run; then
-             _log_error "无法停止现有的Hysteria服务。请手动停止后重试。"
+        _control_service "stop" 
+        if [ $? -ne 0 ] && $hysteria_was_installed_before_this_run; then # Check if stop command itself failed
+             _log_error "无法停止现有的Hysteria服务（命令执行失败）。请手动停止后重试。"
              exit 1
         fi
+        # _ensure_service_stopped is now called within _control_service "stop"
     fi
 
-    _install_dependencies
+    _install_dependencies # This will now install 'file' and 'procps-ng'/'procps'
     DEFAULT_MASQUERADE_URL="https://www.bing.com"; DEFAULT_PORT="34567"; DEFAULT_ACME_EMAIL="$(_generate_random_lowercase_string)@gmail.com"
     echo ""; _log_info "请选择 TLS 验证方式:"; echo "1. 自定义证书"; echo "2. ACME HTTP 验证"; _read_from_tty TLS_TYPE "选择 [1-2, 默认 1]: "; TLS_TYPE=${TLS_TYPE:-1}
     CERT_PATH=""; KEY_PATH=""; DOMAIN=""; SNI_VALUE=""; ACME_EMAIL=""
@@ -318,7 +321,9 @@ _do_install() {
     fi
 
     if $HY_DOWNLOAD_SUCCESS; then
-        if ! file "$TMP_HY_DOWNLOAD" | grep -q "executable"; then 
+        if ! command -v file &>/dev/null; then # Check if 'file' command exists before using it
+            _log_warning "'file' 命令未找到。跳过可执行文件类型检查。"
+        elif ! file "$TMP_HY_DOWNLOAD" | grep -q "executable"; then 
             _log_error "下载的文件非可执行程序。请检查下载源或网络。"
             _log_info "文件类型: $(file "$TMP_HY_DOWNLOAD")"
             rm -f "$TMP_HY_DOWNLOAD"
@@ -330,10 +335,10 @@ _do_install() {
         fi
 
         _log_info "准备替换Hysteria二进制文件...";
-        if $hysteria_was_installed_before_this_run; then # If reinstalling, ensure service is stopped before mv
+        if $hysteria_was_installed_before_this_run; then 
             _log_info "再次确认Hysteria服务已停止 (强制安装前)..."
-            _control_service "stop" # This call now internally uses _ensure_service_stopped
-            if [ $? -ne 0 ]; then # Check if stop failed
+            _control_service "stop" 
+            if [ $? -ne 0 ]; then 
                 _log_error "无法在替换文件前停止Hysteria服务。请手动停止后重试。"
                 rm -f "$TMP_HY_DOWNLOAD" 
                 exit 1
@@ -352,10 +357,10 @@ _do_install() {
             fi
             exit 1
         fi
-    else # HY_DOWNLOAD_SUCCESS is false - this case should have been caught by exit 1 above. Defensive.
+    else 
         _log_error "Hysteria 下载未知错误。"; rm -f "$TMP_HY_DOWNLOAD"; exit 1;
     fi
-    rm -f "$TMP_HY_DOWNLOAD" # Clean up temp file if mv was successful
+    rm -f "$TMP_HY_DOWNLOAD" 
 
     if [ "$TLS_TYPE" -eq 2 ]; then
          _log_info "设置cap_net_bind_service权限(ACME)...";
@@ -473,7 +478,7 @@ _do_uninstall() {
     if [[ "$confirm_uninstall" != "y" && "$confirm_uninstall" != "Y" ]]; then _log_info "卸载取消。"; exit 0; fi
 
     _log_info "停止Hysteria服务...";
-    _control_service "stop" # This call will use _ensure_service_stopped
+    _control_service "stop" 
     if [ $? -ne 0 ]; then 
         _log_warning "未能完全停止Hysteria服务，但仍将继续卸载。"
     fi
@@ -502,7 +507,7 @@ _control_service() {
 
     if [[ "$action" == "start" || "$action" == "stop" || "$action" == "restart" || "$action" == "status" ]]; then
         if ! _is_hysteria_installed; then
-            if [[ "$action" != "stop" ]]; then # Allow 'stop' to proceed even if not fully installed, to try and clean up
+            if [[ "$action" != "stop" ]]; then 
                 _log_error "Hysteria未安装或服务未配置。请用'${SCRIPT_COMMAND_NAME} install'安装。"
                 return 1
             fi
@@ -519,7 +524,7 @@ _control_service() {
             if [[ "$INIT_SYSTEM" == "openrc" ]]; then
                 cmd_to_run_array=("$SERVICE_CMD" "$service_name_to_manage" "$action")
                 log_cmd_str="$SERVICE_CMD $service_name_to_manage $action"
-            else # systemd
+            else 
                 cmd_to_run_array=("$SERVICE_CMD" "$action" "$service_name_to_manage")
                 log_cmd_str="$SERVICE_CMD $action $service_name_to_manage"
             fi
@@ -527,8 +532,6 @@ _control_service() {
 
             if [[ "$INIT_SYSTEM" == "systemd" && "$action" == "stop" ]] && ! "$SERVICE_CMD" is-active --quiet "$service_name_to_manage"; then
                 _log_info "服务($service_name_to_manage)已停止(Systemd检测)。"
-                # If ensuring stopped is desired even here, call _ensure_service_stopped
-                # For now, trust systemd's 'is-active' for this specific early exit.
                 return 0 
             fi
             
@@ -539,22 +542,21 @@ _control_service() {
                 _log_info "在 'stop' 操作后，调用 _ensure_service_stopped 进行确认..."
                 if _ensure_service_stopped "$HYSTERIA_INSTALL_PATH" "Hysteria"; then
                     _log_success "操作 'stop' 完成且服务已确认停止。"
-                    return 0 # Success for stop
+                    return 0 
                 else
                     _log_error "操作 'stop' 后服务未能确认停止。"
-                    return 1 # Failure for stop
+                    return 1 
                 fi
             fi
 
-            # For start/restart
             if [ $cmd_exec_result -eq 0 ]; then
                 _log_success "操作'$action'成功。"
                 if [[ "$action" == "start" || "$action" == "restart" ]]; then
-                    sleep 1 # Give service a moment to come up
+                    sleep 1 
                     local status_cmd_array
                     if [[ "$INIT_SYSTEM" == "openrc" ]]; then
                         status_cmd_array=("$SERVICE_CMD" "$service_name_to_manage" "status")
-                    else # systemd
+                    else 
                         status_cmd_array=("$SERVICE_CMD" "status" "$service_name_to_manage")
                     fi
                     "${status_cmd_array[@]}" 2>/dev/null | head -n 5 || "${status_cmd_array[@]}"
@@ -578,7 +580,7 @@ _control_service() {
             _log_info "Hysteria服务状态($service_name_to_manage):"
             if [[ "$INIT_SYSTEM" == "openrc" ]]; then
                 cmd_to_run_array=("$SERVICE_CMD" "$service_name_to_manage" "$action")
-            else # systemd
+            else 
                 cmd_to_run_array=("$SERVICE_CMD" "$action" "$service_name_to_manage")
             fi
             "${cmd_to_run_array[@]}"
@@ -692,7 +694,9 @@ _update_hysteria_binary() {
         fi
     fi
 
-    if ! file "$TMP_HY_DOWNLOAD" | grep -q "executable"; then
+    if ! command -v file &>/dev/null; then
+        _log_warning "'file' 命令未找到。跳过可执行文件类型检查。"
+    elif ! file "$TMP_HY_DOWNLOAD" | grep -q "executable"; then
         _log_error "下载文件非可执行。文件类型: $(file "$TMP_HY_DOWNLOAD")"; rm -f "$TMP_HY_DOWNLOAD"; return 1;
     fi
     chmod +x "$TMP_HY_DOWNLOAD";
@@ -706,17 +710,16 @@ _update_hysteria_binary() {
     fi
 
     _log_info "准备替换...";
-    _control_service "stop" # This will internally call _ensure_service_stopped
-    if [ $? -ne 0 ]; then   # Check the return status of _control_service "stop"
+    _control_service "stop" 
+    if [ $? -ne 0 ]; then   
         _log_error "无法停止Hysteria服务以进行更新。"
         rm -f "$TMP_HY_DOWNLOAD"
         return 1
     fi
-    # If _control_service "stop" succeeded, _ensure_service_stopped also succeeded.
 
     if mv "$TMP_HY_DOWNLOAD" "$HYSTERIA_INSTALL_PATH"; then
         _log_success "Hysteria已更新至 ${DOWNLOADED_VER:-latest}。"
-        rm -f "$TMP_HY_DOWNLOAD" # Clean up temp file after successful move
+        rm -f "$TMP_HY_DOWNLOAD" 
         if grep -q '^\s*acme:' "$HYSTERIA_CONFIG_FILE"; then
             _log_info "检测到ACME配置，尝试重应用setcap权限...";
             if command -v setcap &>/dev/null; then
