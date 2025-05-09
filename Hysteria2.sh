@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.9" # Added feedback prompt after uninstall
+SCRIPT_VERSION="1.5.10" # Fixed syntax error (missing fi) in _control_service
 SCRIPT_DATE="2025-05-09"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -487,7 +487,7 @@ _do_uninstall() {
             fi
         fi
         _log_info "尝试自动卸载 qrencode (包: ${pkg_to_remove_name})..."
-        if $PKG_REMOVE_CMD "$pkg_to_remove_name" >/dev/null; 
+        if $PKG_REMOVE_CMD "$pkg_to_remove_name" >/dev/null; then 
             _log_success "${pkg_to_remove_name} 已卸载。"
         else
             _log_warning "卸载 ${pkg_to_remove_name} 失败 (可能未通过此名称安装或出错)。"
@@ -516,20 +516,21 @@ _control_service() {
     fi
 
     local cmd_to_run=""
-    local constructed_cmd_success=true
+    local constructed_cmd_success=true # Assume true, set to false if init system unknown
+    
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then
         cmd_to_run="$SERVICE_CMD $action $CURRENT_HYSTERIA_SERVICE_NAME"
     elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
         cmd_to_run="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME $action"
     else
-        _log_error "不支持的初始化系统: $INIT_SYSTEM (action: $action)"; constructed_cmd_success=false;
-        return 1;
+        _log_error "不支持的初始化系统: $INIT_SYSTEM (action: $action)"; constructed_cmd_success=false; # Set flag here
+        return 1; # Exit early if init system is not supported
     fi
 
     case "$action" in
         start|stop|restart)
             _ensure_root; _log_info "执行: $cmd_to_run"
-            if ! $constructed_cmd_success; then return 1; fi
+            # constructed_cmd_success check is implicitly handled by the return 1 above if init system is unknown
 
             local cmd_output
             local cmd_exit_code
@@ -537,22 +538,25 @@ _control_service() {
             cmd_output=$(eval "$cmd_to_run" 2>&1)
             cmd_exit_code=$?
             
+            # Handle OpenRC's "already stopped" for stop/restart actions
             if [[ "$INIT_SYSTEM" == "openrc" && ("$action" == "stop" || "$action" == "restart") ]]; then
                 if echo "$cmd_output" | grep -q "service .* already stopped"; then
                     _log_warning "服务 '$CURRENT_HYSTERIA_SERVICE_NAME' 在尝试停止时已停止。"
-                    if [[ "$action" == "stop" ]]; then 
+                    if [[ "$action" == "stop" ]]; then # If action was stop, and it's already stopped, it's a success for stop
                         cmd_exit_code=0 
                     fi
                 fi
+                # If it was a restart and stop part reported "already stopped" or stop failed for other reason but we want to start
                 if [[ "$action" == "restart" && $cmd_exit_code -ne 0 && $(echo "$cmd_output" | grep -q "service .* already stopped") ]]; then
                      _log_info "由于服务已停止，现在尝试启动 (作为 restart 的一部分)..."
                      local start_cmd_openrc="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME start"
-                     cmd_output=$(eval "$start_cmd_openrc" 2>&1) 
+                     cmd_output=$(eval "$start_cmd_openrc" 2>&1) # Overwrite cmd_output with start attempt
                      cmd_exit_code=$?
-                elif [[ "$action" == "restart" && $cmd_exit_code -eq 0 && $(echo "$cmd_output" | grep -q "Stopping ${CURRENT_HYSTERIA_SERVICE_NAME}") && ! $(echo "$cmd_output" | grep -q "Starting ${CURRENT_HYSTERIA_SERVICE_NAME}") ]]; then 
+                # Handle cases where OpenRC 'restart' only stops if it doesn't auto-start (e.g. if restart isn't native and stop succeeded)
+                elif [[ "$action" == "restart" && $cmd_exit_code -eq 0 && $(echo "$cmd_output" | grep -q "Stopping ${CURRENT_HYSTERIA_SERVICE_NAME}") && ! $(echo "$cmd_output" | grep -q "Starting ${CURRENT_HYSTERIA_SERVICE_NAME}") ]]; then
                      _log_info "服务已停止，现在尝试启动 (作为 restart 的一部分)..."
                      local start_cmd_openrc="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME start"
-                     cmd_output=$(eval "$start_cmd_openrc" 2>&1)
+                     cmd_output=$(eval "$start_cmd_openrc" 2>&1) # Overwrite cmd_output
                      cmd_exit_code=$?
                 fi
             fi
@@ -588,7 +592,14 @@ _control_service() {
             fi;;
         status)
             _log_info "Hysteria服务状态($CURRENT_HYSTERIA_SERVICE_NAME):"
-            if ! $constructed_cmd_success; then return 1; fi
+            # Re-evaluate cmd_to_run for status case as it was not covered by the initial generic construction
+            if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+                cmd_to_run="$SERVICE_CMD $action $CURRENT_HYSTERIA_SERVICE_NAME"
+            elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
+                 cmd_to_run="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME $action"
+            else
+                 _log_error "不支持的初始化系统: $INIT_SYSTEM (action: $action)"; return 1;
+            fi
             eval "$cmd_to_run"; return $?;;
         enable)
             _ensure_root; _log_info "启用Hysteria开机自启...";
@@ -643,7 +654,7 @@ _change_config_interactive() {
     if [ "$NEW_PASSWORD" != "$CURRENT_PASSWORD_RAW" ]; then _log_info "更改密码..."; awk -v new_pass="$NEW_PASSWORD" 'BEGIN{pb=0} /^auth:/{pb=1;print;next} pb&&/password:/{print "  password: " new_pass;pb=0;next} pb&&NF>0&&!/^[[:space:]]/{pb=0} {print}' "$HYSTERIA_CONFIG_FILE" > "$temp_config_file" && mv "$temp_config_file" "$HYSTERIA_CONFIG_FILE" || { _log_error "更改密码失败"; cat "$CONFIG_BACKUP_FILE" > "$HYSTERIA_CONFIG_FILE"; rm -f "$temp_config_file" "$CONFIG_BACKUP_FILE"; return 1; }; fi
     if [ "$NEW_MASQUERADE" != "$CURRENT_MASQUERADE" ]; then _log_info "更改伪装URL '$CURRENT_MASQUERADE' -> '$NEW_MASQUERADE'..."; awk -v new_url="$NEW_MASQUERADE" 'BEGIN{mb=0} /^masquerade:/{mb=1;print;next} mb&&/url:/{print "    url: " new_url;mb=0;next} mb&&NF>0&&!/^[[:space:]]/{mb=0} {print}' "$HYSTERIA_CONFIG_FILE" > "$temp_config_file" && mv "$temp_config_file" "$HYSTERIA_CONFIG_FILE" || { _log_error "更改伪装URL失败"; cat "$CONFIG_BACKUP_FILE" > "$HYSTERIA_CONFIG_FILE"; rm -f "$temp_config_file" "$CONFIG_BACKUP_FILE"; return 1; }; fi
     
-    if [ -f "$temp_config_file" ]; then rm -f "$temp_config_file"; fi # Ensure temp file is removed
+    if [ -f "$temp_config_file" ]; then rm -f "$temp_config_file"; fi
     
     if $config_changed; then
         _log_success "配置更新。重启服务以应用更改...";
