@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.4.3" # Incremented for version display/update logic fixes
+SCRIPT_VERSION="1.4.4" # Incremented for version display/update logic fixes
 SCRIPT_DATE="2025-05-08" 
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -171,19 +171,9 @@ _get_link_params_from_config() {
         # Custom TLS Mode
          _log_info "检测到自定义 TLS 配置。"
          
-         # --- Use awk to parse cert path from tls block ---
-         CERT_PATH_FROM_CONFIG=$(awk '
-            BEGIN { in_tls=0 }
-            /^\s*tls:/ { in_tls=1; next }
-            in_tls && /^\s*cert:/ { 
-                cert_path = $2; 
-                gsub(/^["'\'']|["'\'']$/, "", cert_path); # Remove potential quotes
-                print cert_path; 
-                exit 
-            }
-            in_tls && !/^\s+/ { in_tls=0 } # Exit tls block if indentation changes
-            ' "$HYSTERIA_CONFIG_FILE")
-         # --- End awk parsing ---
+         # --- Use grep and sed to parse cert path ---
+         CERT_PATH_FROM_CONFIG=$(grep '^\s*cert:' "$HYSTERIA_CONFIG_FILE" | head -n 1 | sed -e 's/^\s*cert:[[:space:]]*//' -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/^["'\'']//' -e 's/["'\'']$//' || echo "")
+         # --- End grep/sed parsing ---
 
         if [ -z "$CERT_PATH_FROM_CONFIG" ]; then _log_error "无法从配置解析证书路径。"; return 1; fi
         
@@ -195,7 +185,7 @@ _get_link_params_from_config() {
         if [ ! -f "$CERT_PATH_FROM_CONFIG" ]; then _log_error "配置文件中的证书路径 '$CERT_PATH_FROM_CONFIG' 无效或文件不存在。"; return 1; fi
         _log_info "证书路径: $CERT_PATH_FROM_CONFIG"
         _log_info "尝试从证书提取 SNI..."
-        # SNI extraction logic remains the same (it worked before for custom certs)
+        # SNI extraction logic remains the same
         HY_SNI_VALUE=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | sed -n 's/.*CN=\([^,]*\).*/\1/p'); if [ -z "$HY_SNI_VALUE" ]; then HY_SNI_VALUE=$(openssl x509 -noout -subject -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | sed -n 's/.*CN ?= ?\([^,]*\).*/\1/p' | head -n 1 | sed 's/^[ \t]*//;s/[ \t]*$//'); fi
         if [ -z "$HY_SNI_VALUE" ]; then HY_SNI_VALUE=$(openssl x509 -noout -text -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | grep 'DNS:' | head -n 1 | sed 's/.*DNS://' | tr -d ' ' | cut -d, -f1); fi
         if [ -z "$HY_SNI_VALUE" ]; then _log_warning "无法提取有效SNI(CN或SAN), 使用'sni_unknown'代替。"; HY_SNI_VALUE="sni_unknown"; else _log_info "提取到 SNI: $HY_SNI_VALUE"; fi
