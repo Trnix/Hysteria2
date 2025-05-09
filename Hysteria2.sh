@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.4.2" # Incremented for version display/update logic fixes
+SCRIPT_VERSION="1.4.3" # Incremented for version display/update logic fixes
 SCRIPT_DATE="2025-05-08" 
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -147,30 +147,73 @@ _setup_hy_command() {
 }
 
 _get_link_params_from_config() {
-    # ... (Function remains the same as the fixed version in the previous response, DEBUG lines removed) ...
+    # Parses current config for link generation parameters
     unset HY_PASSWORD HY_LINK_ADDRESS HY_PORT HY_LINK_SNI HY_LINK_INSECURE HY_SNI_VALUE DOMAIN_FROM_CONFIG CERT_PATH_FROM_CONFIG KEY_PATH_FROM_CONFIG
+
     if [ ! -f "$HYSTERIA_CONFIG_FILE" ]; then _log_error "配置文件 $HYSTERIA_CONFIG_FILE 未找到。"; return 1; fi
+
     _log_info "正从 $HYSTERIA_CONFIG_FILE 解析配置以生成链接..."
+
+    # Parse Port
     HY_PORT=$(grep -E '^\s*listen:\s*:([0-9]+)' "$HYSTERIA_CONFIG_FILE" | sed -E 's/^\s*listen:\s*://' || echo "")
+    
+    # Parse Password
     HY_PASSWORD=$(grep 'password:' "$HYSTERIA_CONFIG_FILE" | head -n 1 | sed -e 's/^.*password:[[:space:]]*//' -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/["'\'']//g' || echo "")
+
     if grep -q '^\s*acme:' "$HYSTERIA_CONFIG_FILE"; then
+        # ACME Mode
         _log_info "检测到 ACME 配置。"
         DOMAIN_FROM_CONFIG=$(grep -A 1 '^\s*domains:' "$HYSTERIA_CONFIG_FILE" | grep '^\s*-\s*' | sed -e 's/^\s*-\s*//' -e 's/#.*//' -e 's/[ \t]*$//' -e 's/^["'\'']//' -e 's/["'\'']$//')
         if [ -z "$DOMAIN_FROM_CONFIG" ]; then _log_error "无法从配置解析ACME域名。"; return 1; fi
+        # _log_info "ACME 域名: $DOMAIN_FROM_CONFIG" # Verbose
         HY_LINK_SNI="$DOMAIN_FROM_CONFIG"; HY_LINK_ADDRESS="$DOMAIN_FROM_CONFIG"; HY_LINK_INSECURE="0"; HY_SNI_VALUE="$DOMAIN_FROM_CONFIG"
     elif grep -q '^\s*tls:' "$HYSTERIA_CONFIG_FILE"; then
+        # Custom TLS Mode
          _log_info "检测到自定义 TLS 配置。"
-        CERT_PATH_FROM_CONFIG=$(grep '^\s*tls:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*cert: \([^, }]*\).*/\1/p' || echo "")
+         
+         # --- Use awk to parse cert path from tls block ---
+         CERT_PATH_FROM_CONFIG=$(awk '
+            BEGIN { in_tls=0 }
+            /^\s*tls:/ { in_tls=1; next }
+            in_tls && /^\s*cert:/ { 
+                cert_path = $2; 
+                gsub(/^["'\'']|["'\'']$/, "", cert_path); # Remove potential quotes
+                print cert_path; 
+                exit 
+            }
+            in_tls && !/^\s+/ { in_tls=0 } # Exit tls block if indentation changes
+            ' "$HYSTERIA_CONFIG_FILE")
+         # --- End awk parsing ---
+
         if [ -z "$CERT_PATH_FROM_CONFIG" ]; then _log_error "无法从配置解析证书路径。"; return 1; fi
+        
+        # Resolve relative paths based on config dir if necessary
         if [[ "$CERT_PATH_FROM_CONFIG" != /* ]]; then CERT_PATH_FROM_CONFIG="${HYSTERIA_CONFIG_DIR}/${CERT_PATH_FROM_CONFIG}"; fi
+        # Normalize path with realpath if available
         if command -v realpath &>/dev/null; then CERT_PATH_FROM_CONFIG=$(realpath -m "$CERT_PATH_FROM_CONFIG" 2>/dev/null || echo "$CERT_PATH_FROM_CONFIG"); fi
+
         if [ ! -f "$CERT_PATH_FROM_CONFIG" ]; then _log_error "配置文件中的证书路径 '$CERT_PATH_FROM_CONFIG' 无效或文件不存在。"; return 1; fi
-        _log_info "尝试从证书提取 SNI..."; HY_SNI_VALUE=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | sed -n 's/.*CN=\([^,]*\).*/\1/p'); if [ -z "$HY_SNI_VALUE" ]; then HY_SNI_VALUE=$(openssl x509 -noout -subject -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | sed -n 's/.*CN ?= ?\([^,]*\).*/\1/p' | head -n 1 | sed 's/^[ \t]*//;s/[ \t]*$//'); fi
+        _log_info "证书路径: $CERT_PATH_FROM_CONFIG"
+        _log_info "尝试从证书提取 SNI..."
+        # SNI extraction logic remains the same (it worked before for custom certs)
+        HY_SNI_VALUE=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | sed -n 's/.*CN=\([^,]*\).*/\1/p'); if [ -z "$HY_SNI_VALUE" ]; then HY_SNI_VALUE=$(openssl x509 -noout -subject -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | sed -n 's/.*CN ?= ?\([^,]*\).*/\1/p' | head -n 1 | sed 's/^[ \t]*//;s/[ \t]*$//'); fi
         if [ -z "$HY_SNI_VALUE" ]; then HY_SNI_VALUE=$(openssl x509 -noout -text -in "$CERT_PATH_FROM_CONFIG" 2>/dev/null | grep 'DNS:' | head -n 1 | sed 's/.*DNS://' | tr -d ' ' | cut -d, -f1); fi
         if [ -z "$HY_SNI_VALUE" ]; then _log_warning "无法提取有效SNI(CN或SAN), 使用'sni_unknown'代替。"; HY_SNI_VALUE="sni_unknown"; else _log_info "提取到 SNI: $HY_SNI_VALUE"; fi
+        
         HY_LINK_SNI="$HY_SNI_VALUE"; HY_LINK_ADDRESS=$(_get_server_address); if [ $? -ne 0 ] || [ -z "$HY_LINK_ADDRESS" ]; then _log_error "获取公网地址失败。"; return 1; fi; HY_LINK_INSECURE="1"
     else _log_error "无法确定TLS模式。"; return 1; fi
-    if [ -z "$HY_PORT" ] || [ -z "$HY_PASSWORD" ] || [ -z "$HY_LINK_ADDRESS" ] || [ -z "$HY_LINK_SNI" ] || [ -z "$HY_LINK_INSECURE" ] || [ -z "$HY_SNI_VALUE" ]; then _log_error "未能解析生成链接所需的所有参数。"; if [ -z "$HY_PORT" ]; then _log_error "  - 端口解析失败。"; fi; if [ -z "$HY_PASSWORD" ]; then _log_error "  - 密码解析失败。"; fi; if [ -z "$HY_LINK_ADDRESS" ]; then _log_error "  - 链接地址获取失败。"; fi; if [ -z "$HY_LINK_SNI" ]; then _log_error "  - 链接SNI解析失败。"; fi; if [ -z "$HY_SNI_VALUE" ]; then _log_error "  - SNI值解析失败。"; fi; return 1; fi
+
+    # Final Check
+    if [ -z "$HY_PORT" ] || [ -z "$HY_PASSWORD" ] || [ -z "$HY_LINK_ADDRESS" ] || [ -z "$HY_LINK_SNI" ] || [ -z "$HY_LINK_INSECURE" ] || [ -z "$HY_SNI_VALUE" ]; then
+        _log_error "未能从配置文件解析生成链接所需的所有参数。"
+        if [ -z "$HY_PORT" ]; then _log_error "  - 端口 (Port) 解析失败。"; fi
+        if [ -z "$HY_PASSWORD" ]; then _log_error "  - 密码 (Password) 解析失败。"; fi
+        if [ -z "$HY_LINK_ADDRESS" ]; then _log_error "  - 链接地址 (Link Address) 解析/获取失败。"; fi
+        if [ -z "$HY_LINK_SNI" ]; then _log_error "  - 链接SNI (Link SNI) 解析失败。"; fi
+        if [ -z "$HY_SNI_VALUE" ]; then _log_error "  - SNI值 (SNI Value) 解析/获取失败。"; fi
+        return 1
+    fi
+    # _log_info "成功解析链接参数。" # Can be verbose
     return 0
 }
 
