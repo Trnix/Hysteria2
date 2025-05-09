@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.6" # Fix Hysteria binary version comparison, stop service before overwrite in install
+SCRIPT_VERSION="1.5.7" # Show link/QR after config_change, improved service stop logic for OpenRC
 SCRIPT_DATE="2025-05-09"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -185,7 +185,7 @@ _setup_hy_command() {
             _log_info "已为 ${installed_script_path} 设置执行权限。"
         fi
     fi
-    rm -f "$TMP_SCRIPT_DOWNLOAD_PATH" # Clean up temp file if it still exists
+    rm -f "$TMP_SCRIPT_DOWNLOAD_PATH" 
     return 0
 }
 
@@ -308,20 +308,20 @@ _do_install() {
     if [ -f "$HYSTERIA_INSTALL_PATH" ] && command -v "$HYSTERIA_INSTALL_PATH" &>/dev/null; then
         _log_info "检测到已安装的 Hysteria 程序，正在检查版本..."
         VERSION_OUTPUT=$("$HYSTERIA_INSTALL_PATH" version 2>/dev/null)
-        CURRENT_HY_VER_RAW=$(echo "$VERSION_OUTPUT" | grep '^Version:' | awk '{print $2}') # e.g., v2.6.1 or 2.6.1
-        CURRENT_HY_VER=$(echo "$CURRENT_HY_VER_RAW" | sed 's#^v##') # Normalize to just X.Y.Z, e.g., 2.6.1
+        CURRENT_HY_VER_RAW=$(echo "$VERSION_OUTPUT" | grep '^Version:' | awk '{print $2}') 
+        CURRENT_HY_VER=$(echo "$CURRENT_HY_VER_RAW" | sed 's#^v##') 
 
         if [ -n "$CURRENT_HY_VER" ] && [ "$CURRENT_HY_VER" != "unknown" ]; then
             _log_info "当前已安装 Hysteria 版本: $CURRENT_HY_VER_RAW (规范化为: $CURRENT_HY_VER). 正在获取最新版本..."
             LATEST_VER_TAG=$(curl -s --connect-timeout 5 "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
             if [ -n "$LATEST_VER_TAG" ]; then
-                LATEST_HY_VER_CLEAN=$(echo "$LATEST_VER_TAG" | sed -e 's#^app/##' -e 's#^v##') # Normalize to just X.Y.Z
+                LATEST_HY_VER_CLEAN=$(echo "$LATEST_VER_TAG" | sed -e 's#^app/##' -e 's#^v##') 
                 _log_info "GitHub 最新 Hysteria 版本 Tag: $LATEST_VER_TAG (规范化为: $LATEST_HY_VER_CLEAN)"
                 if [[ "$CURRENT_HY_VER" == "$LATEST_HY_VER_CLEAN" ]]; then
-                    _log_success "已安装的 Hysteria 程序 (版本 $CURRENT_HY_VER) 已是最新。将跳过下载。"
+                    _log_success "已安装的 Hysteria 程序 (版本 $CURRENT_HY_VER_RAW) 已是最新。将跳过下载。"
                     perform_hysteria_download=false
                 else
-                    _log_info "检测到 Hysteria 程序新版本 (最新: $LATEST_HY_VER_CLEAN, 当前: $CURRENT_HY_VER)。准备下载更新。"
+                    _log_info "Hysteria 程序版本不一致 (最新: $LATEST_HY_VER_CLEAN, 当前: $CURRENT_HY_VER)。准备下载更新。"
                 fi
             else
                 _log_warning "无法从 GitHub API 获取最新 Hysteria 版本号。将继续尝试下载以确保最新。"
@@ -334,10 +334,10 @@ _do_install() {
     fi
 
     if $perform_hysteria_download; then
-        if _is_hysteria_installed; then # If we are overwriting an existing installation's binary
+        if _is_hysteria_installed; then 
             _log_info "准备更新 Hysteria 二进制文件，将先停止现有服务 (如果正在运行)..."
-            _control_service "stop" # This will log success/failure, and handle "already stopped"
-            sleep 1 # Give a moment for process to release file handle
+            _control_service "stop" 
+            sleep 1 
         fi
 
         _log_info "下载Hysteria..."; ARCH=$(uname -m); case ${ARCH} in x86_64) HYSTERIA_ARCH="amd64";; aarch64) HYSTERIA_ARCH="arm64";; armv7l) HYSTERIA_ARCH="arm";; *) _log_error "不支持架构: ${ARCH}"; exit 1;; esac
@@ -354,11 +354,10 @@ _do_install() {
         chmod +x "$HYSTERIA_INSTALL_PATH"
         _log_success "Hysteria 程序准备就绪: $HYSTERIA_INSTALL_PATH"
     else
-        # This block should ideally not be reached if download logic is correct and exits on failure.
         if $perform_hysteria_download; then 
             _log_error "Hysteria 程序文件在尝试下载后未找到于 $HYSTERIA_INSTALL_PATH。安装中止。"
             exit 1
-        else # Download was skipped but file is still missing (e.g. initial check -f was false, then this path)
+        else
              _log_error "Hysteria 程序未安装 (${HYSTERIA_INSTALL_PATH} 不存在) 且下载被跳过。这是一个意外情况，请检查脚本逻辑。"
              exit 1
         fi
@@ -448,16 +447,15 @@ EOF
         chmod +x "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME"; fi; _log_success "服务文件创建成功。"
     _control_service "enable"; 
     _log_info "准备启动/重启 Hysteria 服务..."
-    _control_service "restart" # This handles starting or restarting the service with new config/binary
+    _control_service "restart"
     
-    sleep 2; # Give service time to stabilize after restart/start
+    sleep 2; 
     if _control_service "status" > /dev/null; then 
         _log_success "Hysteria服务已成功运行！"
     else 
-        _log_error "Hysteria服务状态异常! 请检查日志。" # Removed one of the "请检查日志"
+        _log_error "Hysteria服务状态异常!" 
     fi
     
-    # Install/update hy command itself
     _setup_hy_command
 
     _log_success "Hysteria 2安装配置完成！"
@@ -545,12 +543,12 @@ _control_service() {
                 if [[ "$action" == "restart" && $cmd_exit_code -ne 0 && $(echo "$cmd_output" | grep -q "service .* already stopped") ]]; then
                      _log_info "由于服务已停止，现在尝试启动 (作为 restart 的一部分)..."
                      local start_cmd_openrc="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME start"
-                     cmd_output=$(eval "$start_cmd_openrc" 2>&1) # Overwrite cmd_output with start attempt
+                     cmd_output=$(eval "$start_cmd_openrc" 2>&1) 
                      cmd_exit_code=$?
                 elif [[ "$action" == "restart" && $cmd_exit_code -eq 0 && $(echo "$cmd_output" | grep -q "Stopping ${CURRENT_HYSTERIA_SERVICE_NAME}") && ! $(echo "$cmd_output" | grep -q "Starting ${CURRENT_HYSTERIA_SERVICE_NAME}") ]]; then
                      _log_info "服务已停止，现在尝试启动 (作为 restart 的一部分)..."
                      local start_cmd_openrc="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME start"
-                     cmd_output=$(eval "$start_cmd_openrc" 2>&1) # Overwrite cmd_output
+                     cmd_output=$(eval "$start_cmd_openrc" 2>&1)
                      cmd_exit_code=$?
                 fi
             fi
@@ -587,7 +585,6 @@ _control_service() {
         status)
             _log_info "Hysteria服务状态($CURRENT_HYSTERIA_SERVICE_NAME):"
             if ! $constructed_cmd_success; then return 1; fi
-            # We want to display status output, not just get exit code for the script's logic
             eval "$cmd_to_run"; return $?;;
         enable)
             _ensure_root; _log_info "启用Hysteria开机自启...";
@@ -629,12 +626,35 @@ _change_config_interactive() {
     _read_from_tty NEW_PORT "新监听端口" "$CURRENT_PORT"; NEW_PORT=${NEW_PORT:-$CURRENT_PORT}
     _read_from_tty NEW_PASSWORD_INPUT "新密码" "$CURRENT_PASSWORD_RAW"; NEW_PASSWORD=""; if [ -n "$NEW_PASSWORD_INPUT" ]; then if [ "$NEW_PASSWORD_INPUT" == "random" ]; then NEW_PASSWORD=$(_generate_uuid); _log_info "生成新随机密码:$NEW_PASSWORD"; else NEW_PASSWORD="$NEW_PASSWORD_INPUT"; fi; else NEW_PASSWORD="$CURRENT_PASSWORD_RAW"; fi
     _read_from_tty NEW_MASQUERADE_URL_INPUT "新伪装URL" "$CURRENT_MASQUERADE"; NEW_MASQUERADE=${NEW_MASQUERADE_URL_INPUT:-$CURRENT_MASQUERADE}
-    CONFIG_BACKUP_FILE="${HYSTERIA_CONFIG_FILE}.bak.$(date +%s)"; cp "$HYSTERIA_CONFIG_FILE" "$CONFIG_BACKUP_FILE"; _log_info "配置文件备份至$CONFIG_BACKUP_FILE"
-    local config_changed=false; temp_config_file=$(mktemp)
-    if [ "$NEW_PORT" != "$CURRENT_PORT" ]; then _log_info "更改端口 '$CURRENT_PORT' -> '$NEW_PORT'..."; sed "s/^listen: :${CURRENT_PORT}/listen: :${NEW_PORT}/" "$HYSTERIA_CONFIG_FILE" > "$temp_config_file" && mv "$temp_config_file" "$HYSTERIA_CONFIG_FILE" || { _log_error "更改端口失败"; cat "$CONFIG_BACKUP_FILE" > "$HYSTERIA_CONFIG_FILE"; rm -f "$temp_config_file"; return 1; }; config_changed=true; fi
-    if [ "$NEW_PASSWORD" != "$CURRENT_PASSWORD_RAW" ]; then _log_info "更改密码..."; awk -v new_pass="$NEW_PASSWORD" 'BEGIN{pb=0} /^auth:/{pb=1;print;next} pb&&/password:/{print "  password: " new_pass;pb=0;next} pb&&NF>0&&!/^[[:space:]]/{pb=0} {print}' "$HYSTERIA_CONFIG_FILE" > "$temp_config_file" && mv "$temp_config_file" "$HYSTERIA_CONFIG_FILE" || { _log_error "更改密码失败"; cat "$CONFIG_BACKUP_FILE" > "$HYSTERIA_CONFIG_FILE"; rm -f "$temp_config_file"; return 1; }; config_changed=true; fi
-    if [ "$NEW_MASQUERADE" != "$CURRENT_MASQUERADE" ]; then _log_info "更改伪装URL '$CURRENT_MASQUERADE' -> '$NEW_MASQUERADE'..."; awk -v new_url="$NEW_MASQUERADE" 'BEGIN{mb=0} /^masquerade:/{mb=1;print;next} mb&&/url:/{print "    url: " new_url;mb=0;next} mb&&NF>0&&!/^[[:space:]]/{mb=0} {print}' "$HYSTERIA_CONFIG_FILE" > "$temp_config_file" && mv "$temp_config_file" "$HYSTERIA_CONFIG_FILE" || { _log_error "更改伪装URL失败"; cat "$CONFIG_BACKUP_FILE" > "$HYSTERIA_CONFIG_FILE"; rm -f "$temp_config_file"; return 1; }; config_changed=true; fi
-    rm -f "$temp_config_file"; if $config_changed; then _log_success "配置更新。重启服务..."; _control_service "restart"; rm -f "$CONFIG_BACKUP_FILE"; else _log_info "未配置更改。"; rm -f "$CONFIG_BACKUP_FILE"; fi
+    
+    local config_changed=false
+    # Only backup if actual changes are to be made
+    if [ "$NEW_PORT" != "$CURRENT_PORT" ] || [ "$NEW_PASSWORD" != "$CURRENT_PASSWORD_RAW" ] || [ "$NEW_MASQUERADE" != "$CURRENT_MASQUERADE" ]; then
+        CONFIG_BACKUP_FILE="${HYSTERIA_CONFIG_FILE}.bak.$(date +%s)"; cp "$HYSTERIA_CONFIG_FILE" "$CONFIG_BACKUP_FILE"; _log_info "配置文件备份至$CONFIG_BACKUP_FILE"
+        config_changed=true
+    fi
+    
+    temp_config_file=$(mktemp) # Create temp file only if we might use it
+    
+    if [ "$NEW_PORT" != "$CURRENT_PORT" ]; then _log_info "更改端口 '$CURRENT_PORT' -> '$NEW_PORT'..."; sed "s/^listen: :${CURRENT_PORT}/listen: :${NEW_PORT}/" "$HYSTERIA_CONFIG_FILE" > "$temp_config_file" && mv "$temp_config_file" "$HYSTERIA_CONFIG_FILE" || { _log_error "更改端口失败"; cat "$CONFIG_BACKUP_FILE" > "$HYSTERIA_CONFIG_FILE"; rm -f "$temp_config_file" "$CONFIG_BACKUP_FILE"; return 1; }; fi
+    if [ "$NEW_PASSWORD" != "$CURRENT_PASSWORD_RAW" ]; then _log_info "更改密码..."; awk -v new_pass="$NEW_PASSWORD" 'BEGIN{pb=0} /^auth:/{pb=1;print;next} pb&&/password:/{print "  password: " new_pass;pb=0;next} pb&&NF>0&&!/^[[:space:]]/{pb=0} {print}' "$HYSTERIA_CONFIG_FILE" > "$temp_config_file" && mv "$temp_config_file" "$HYSTERIA_CONFIG_FILE" || { _log_error "更改密码失败"; cat "$CONFIG_BACKUP_FILE" > "$HYSTERIA_CONFIG_FILE"; rm -f "$temp_config_file" "$CONFIG_BACKUP_FILE"; return 1; }; fi
+    if [ "$NEW_MASQUERADE" != "$CURRENT_MASQUERADE" ]; then _log_info "更改伪装URL '$CURRENT_MASQUERADE' -> '$NEW_MASQUERADE'..."; awk -v new_url="$NEW_MASQUERADE" 'BEGIN{mb=0} /^masquerade:/{mb=1;print;next} mb&&/url:/{print "    url: " new_url;mb=0;next} mb&&NF>0&&!/^[[:space:]]/{mb=0} {print}' "$HYSTERIA_CONFIG_FILE" > "$temp_config_file" && mv "$temp_config_file" "$HYSTERIA_CONFIG_FILE" || { _log_error "更改伪装URL失败"; cat "$CONFIG_BACKUP_FILE" > "$HYSTERIA_CONFIG_FILE"; rm -f "$temp_config_file" "$CONFIG_BACKUP_FILE"; return 1; }; fi
+    
+    rm -f "$temp_config_file" # Clean up temp file if used
+    
+    if $config_changed; then
+        _log_success "配置更新。重启服务以应用更改...";
+        _control_service "restart";
+        rm -f "$CONFIG_BACKUP_FILE"; # Remove successful backup
+    else
+        _log_info "未做配置更改。";
+        if [ -f "$CONFIG_BACKUP_FILE" ]; then rm -f "$CONFIG_BACKUP_FILE"; fi # Remove backup if it was created but no changes made
+    fi
+
+    echo ""
+    _log_info "--- 当前配置的订阅信息 ---"
+    _show_info_and_qrcode
+    echo "------------------------------------------------------------------------"
 }
 
 _show_info_and_qrcode() {
@@ -662,16 +682,19 @@ _update_hysteria_binary() {
     _log_info "下载 Hysteria (目标版本: ${LATEST_VER_CLEAN:-latest}) ..."; ARCH=$(uname -m); case ${ARCH} in x86_64) HYSTERIA_ARCH="amd64";; aarch64) HYSTERIA_ARCH="arm64";; armv7l) HYSTERIA_ARCH="arm";; *) _log_error "不支持架构: ${ARCH}"; return 1;; esac; TMP_HY_DOWNLOAD=$(mktemp); DOWNLOAD_URL="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HYSTERIA_ARCH}";
     
     _log_info "准备停止服务以更新二进制文件..."
-    _control_service "stop"; sleep 1; # Stop service before replacing binary
+    _control_service "stop"; sleep 1; 
 
     if ! wget -qO "$TMP_HY_DOWNLOAD" "$DOWNLOAD_URL"; then
-        _log_error "下载失败! URL: $DOWNLOAD_URL"; rm -f "$TMP_HY_DOWNLOAD"; _control_service "start" &>/dev/null || true; return 1;
+        _log_warning "GitHub下载失败,尝试旧地址...";
+        if ! wget -qO "$TMP_HY_DOWNLOAD" "https://download.hysteria.network/app/latest/hysteria-linux-${HYSTERIA_ARCH}"; then
+             _log_error "下载 Hysteria 失败! (URL: $DOWNLOAD_URL 和备用地址)"; rm -f "$TMP_HY_DOWNLOAD"; _control_service "start" &>/dev/null || true; return 1;
+        fi
     fi
     if ! file "$TMP_HY_DOWNLOAD" | grep -q "executable"; then _log_error "下载文件非可执行。"; rm -f "$TMP_HY_DOWNLOAD"; _control_service "start" &>/dev/null || true; return 1; fi;
     chmod +x "$TMP_HY_DOWNLOAD";
     DOWNLOADED_VER_OUTPUT=$("$TMP_HY_DOWNLOAD" version 2>/dev/null); DOWNLOADED_VER_RAW=$(echo "$DOWNLOADED_VER_OUTPUT" | grep '^Version:' | awk '{print $2}'); DOWNLOADED_VER=$(echo "$DOWNLOADED_VER_RAW" | sed 's#^v##')
 
-    if [[ -n "$DOWNLOADED_VER" && "$DOWNLOADED_VER" == "$CURRENT_VER" && "$CURRENT_VER" != "unknown" ]]; then
+    if [[ -n "$DOWNLOADED_VER" && "$DOWNLOADED_VER" == "$CURRENT_VER" && "$CURRENT_VER" != "unknown" ]]; then # This check is a bit redundant if API check passed, but good fallback
         _log_info "下载版本($DOWNLOADED_VER_RAW)与当前相同。取消更新。"; rm -f "$TMP_HY_DOWNLOAD"; _control_service "start" &>/dev/null || true; return 0;
     elif [[ -n "$DOWNLOADED_VER" ]]; then
         _log_info "下载版本为: $DOWNLOADED_VER_RAW (规范化为: $DOWNLOADED_VER)";
@@ -706,7 +729,8 @@ _show_menu() {
     echo ""; _log_info "Hysteria 管理面板 (${SCRIPT_COMMAND_NAME} v$SCRIPT_VERSION - $SCRIPT_DATE)"
     echo "--------------------------------------------"; echo " 服务管理:";
     echo "   start         - 启动 Hysteria 服务"; echo "   stop          - 停止 Hysteria 服务"; echo "   restart       - 重启 Hysteria 服务"; echo "   status        - 查看 Hysteria 服务状态"; echo "   enable        - 设置 Hysteria 服务开机自启"; echo "   disable       - 禁止 Hysteria 服务开机自启"
-    echo " 配置与信息:"; echo "   config        - 显示当前配置摘要"; echo "   config_edit   - (高级) 手动编辑配置文件 (\$EDITOR)"; echo "   config_change - 交互式更改部分配置 (端口, 密码, 伪装URL)"; echo "   info          - 显示当前订阅链接和二维码"
+    echo " 配置与信息:"; echo "   config        - 显示当前配置摘要"; echo "   config_edit   - (高级) 手动编辑配置文件 (\$EDITOR)"; echo "   config_change - 交互式更改部分配置 (端口, 密码, 伪装URL), 之后显示新链接"
+    echo "   info          - 显示当前订阅链接和二维码"
     echo " 日志查看:"; echo "   logs          - 查看 Hysteria 输出日志 ($LOG_FILE_OUT)"; echo "   logs_err      - 查看 Hysteria 错误日志 ($LOG_FILE_ERR)"
     _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then echo "   logs_sys      - 查看 systemd 服务日志 (journalctl)"; fi
     echo " 安装与更新:"; echo "   install       - 安装或重新安装 Hysteria (会提示覆盖)"; echo "   update        - 更新 Hysteria 程序 和 '${SCRIPT_COMMAND_NAME}' 脚本"
