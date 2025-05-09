@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.2" # Script version check for self-update, OpenRC rc-service fix
+SCRIPT_VERSION="1.5.3" # Fixed service control command argument order for systemd/openrc
 SCRIPT_DATE="2025-05-09"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -118,7 +118,6 @@ _install_dependencies() {
                 _log_error "安装 $pkg 失败。请检查上面的输出，并手动安装后重试。"
                 exit 1
             fi
-             # _log_success "$pkg 安装成功。" # 可以取消注释以获得更详细的成功反馈
         done
     else
         _log_info "所有基础依赖已满足。"
@@ -181,13 +180,12 @@ _setup_hy_command() {
             rm -f "$TMP_SCRIPT_DOWNLOAD_PATH"; return 1;
         fi
     else
-        # Even if no update needed, ensure it's executable if it exists
         if [ -f "$installed_script_path" ] && [ ! -x "$installed_script_path" ]; then
             chmod +x "$installed_script_path";
             _log_info "已为 ${installed_script_path} 设置执行权限。"
         fi
     fi
-    rm -f "$TMP_SCRIPT_DOWNLOAD_PATH" # Clean up temp file if it still exists
+    rm -f "$TMP_SCRIPT_DOWNLOAD_PATH"
     return 0
 }
 
@@ -221,11 +219,7 @@ _update_hy_script() {
     fi
 
     if _setup_hy_command; then
-        # Success message is handled by _setup_hy_command
         if [ -n "$REMOTE_SCRIPT_VERSION" ] && [[ "$SCRIPT_VERSION" != "$REMOTE_SCRIPT_VERSION" ]]; then
-            # Check if the running script is now the new version
-            # This is tricky as the script in memory is the old one.
-            # We can check the version string of the file on disk.
             local new_installed_version=""
             if [ -f "/usr/local/bin/${SCRIPT_COMMAND_NAME}" ]; then
                 new_installed_version=$(grep '^SCRIPT_VERSION=' "/usr/local/bin/${SCRIPT_COMMAND_NAME}" | awk -F'"' '{print $2}' || echo "未知")
@@ -414,17 +408,77 @@ _do_uninstall() {
 
 _control_service() {
     _detect_os; local action="$1"
-    if [[ "$action" == "start" || "$action" == "stop" || "$action" == "restart" || "$action" == "status" ]]; then if ! _is_hysteria_installed; then _log_error "Hysteria未安装或服务未配置。请用'${SCRIPT_COMMAND_NAME} install'安装。"; return 1; fi; fi
-    case "$action" in start|stop|restart) _ensure_root; _log_info "执行: $SERVICE_CMD $action $CURRENT_HYSTERIA_SERVICE_NAME"
-        if [[ "$INIT_SYSTEM" == "systemd" && "$action" == "stop" ]] && ! $SERVICE_CMD is-active --quiet "$CURRENT_HYSTERIA_SERVICE_NAME"; then _log_info "服务($CURRENT_HYSTERIA_SERVICE_NAME)已停止。"; return 0; fi
-        if $SERVICE_CMD "$action" "$CURRENT_HYSTERIA_SERVICE_NAME"; then _log_success "操作'$action'成功。"; if [[ "$action" == "start" || "$action" == "restart" ]]; then sleep 1; $SERVICE_CMD status "$CURRENT_HYSTERIA_SERVICE_NAME" 2>/dev/null | head -n 5 || $SERVICE_CMD status "$CURRENT_HYSTERIA_SERVICE_NAME"; fi
-        else _log_error "操作'$action'失败。"; _log_warning "请检查日志:"; echo "  输出: tail -n 30 $LOG_FILE_OUT"; echo "  错误: tail -n 30 $LOG_FILE_ERR"; if [ "$INIT_SYSTEM" == "systemd" ]; then echo "  Systemd状态: $SERVICE_CMD status $CURRENT_HYSTERIA_SERVICE_NAME"; echo "  Systemd日志: journalctl -u $CURRENT_HYSTERIA_SERVICE_NAME -n 20 --no-pager"; elif [ "$INIT_SYSTEM" == "openrc" ]; then echo "  OpenRC状态: $SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME status"; fi; return 1; fi;;
-        status) _log_info "Hysteria服务状态($CURRENT_HYSTERIA_SERVICE_NAME):"; $SERVICE_CMD "$CURRENT_HYSTERIA_SERVICE_NAME" "$action"; return $?;; # For OpenRC, action is usually last
-        enable) _ensure_root; _log_info "启用Hysteria开机自启..."; if $ENABLE_CMD_PREFIX "$CURRENT_HYSTERIA_SERVICE_NAME" $ENABLE_CMD_SUFFIX >/dev/null 2>&1; then _log_success "已启用开机自启。"; else _log_error "启用开机自启失败。"; return 1; fi;;
-        disable) _ensure_root; _log_info "禁用Hysteria开机自启..."; if [[ "$INIT_SYSTEM" == "systemd" ]]; then $SERVICE_CMD disable "$CURRENT_HYSTERIA_SERVICE_NAME" >/dev/null 2>&1; elif [[ "$INIT_SYSTEM" == "openrc" ]]; then rc-update del "$CURRENT_HYSTERIA_SERVICE_NAME" default >/dev/null 2>&1; fi; _log_success "已禁用开机自启。";;
-        *) _log_error "未知服务操作: $action"; return 1;;
+    if ! _is_hysteria_installed && [[ "$action" != "enable" && "$action" != "disable" ]]; then # enable/disable might be called during install before full setup
+        if _is_hysteria_installed; then : # Already installed, proceed
+        else _log_error "Hysteria未安装或服务未配置。请用'${SCRIPT_COMMAND_NAME} install'安装。"; return 1;
+        fi
+    fi
+
+    local cmd_to_run=""
+    local constructed_cmd_success=true
+    if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+        cmd_to_run="$SERVICE_CMD $action $CURRENT_HYSTERIA_SERVICE_NAME"
+    elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
+        cmd_to_run="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME $action"
+    else
+        _log_error "不支持的初始化系统: $INIT_SYSTEM (action: $action)"; constructed_cmd_success=false; return 1;
+    fi
+
+    case "$action" in
+        start|stop|restart)
+            _ensure_root; _log_info "执行: $cmd_to_run"
+            if ! $constructed_cmd_success; then return 1; fi # Should already have exited if init system unknown
+
+            if $cmd_to_run; then
+                _log_success "操作'$action'成功。"
+                if [[ "$action" == "start" || "$action" == "restart" ]]; then
+                    sleep 1;
+                    local status_cmd_to_run=""
+                    if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+                        status_cmd_to_run="$SERVICE_CMD status $CURRENT_HYSTERIA_SERVICE_NAME"
+                    elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
+                        status_cmd_to_run="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME status"
+                    fi
+                    if [ -n "$status_cmd_to_run" ]; then
+                        $status_cmd_to_run 2>/dev/null | head -n 7 || $status_cmd_to_run # Show some status output
+                    fi
+                fi
+            else
+                _log_error "操作'$action'失败。"
+                _log_warning "请检查日志:"
+                echo "  输出: tail -n 30 $LOG_FILE_OUT"
+                echo "  错误: tail -n 30 $LOG_FILE_ERR"
+                if [ "$INIT_SYSTEM" == "systemd" ]; then
+                    echo "  Systemd状态: systemctl status $CURRENT_HYSTERIA_SERVICE_NAME"
+                    echo "  Systemd日志: journalctl -u $CURRENT_HYSTERIA_SERVICE_NAME -n 20 --no-pager"
+                elif [ "$INIT_SYSTEM" == "openrc" ]; then
+                    echo "  OpenRC状态: rc-service $CURRENT_HYSTERIA_SERVICE_NAME status"
+                fi
+                return 1
+            fi;;
+        status)
+            _log_info "Hysteria服务状态($CURRENT_HYSTERIA_SERVICE_NAME):"
+            if ! $constructed_cmd_success; then return 1; fi
+            if $cmd_to_run; then return 0; else return 1; fi;;
+        enable)
+            _ensure_root; _log_info "启用Hysteria开机自启...";
+            if $ENABLE_CMD_PREFIX "$CURRENT_HYSTERIA_SERVICE_NAME" $ENABLE_CMD_SUFFIX >/dev/null 2>&1; then
+                 _log_success "已启用开机自启。"; else _log_error "启用开机自启失败。"; return 1;
+            fi;;
+        disable)
+            _ensure_root; _log_info "禁用Hysteria开机自启...";
+            local disable_cmd_ok=false
+            if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+                if $SERVICE_CMD disable "$CURRENT_HYSTERIA_SERVICE_NAME" >/dev/null 2>&1; then disable_cmd_ok=true; fi
+            elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
+                if rc-update del "$CURRENT_HYSTERIA_SERVICE_NAME" default >/dev/null 2>&1; then disable_cmd_ok=true; fi
+            fi
+            if $disable_cmd_ok; then _log_success "已禁用开机自启。"; else _log_error "禁用开机自启失败"; return 1; fi;;
+        *)
+            _log_error "未知服务操作: $action"; return 1;;
     esac
 }
+
 
 _show_config() {
     _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria未安装。无配置显示。"; return 1; fi
@@ -473,7 +527,6 @@ _do_update() {
     local hy_update_ok=false; local script_update_ok=false
     _log_info "== 正在更新 Hysteria 程序 =="; if _update_hysteria_binary; then hy_update_ok=true; fi
     echo "---"
-    # _update_hy_script handles its own "== Starting update ==" like message
     if _update_hy_script; then script_update_ok=true; fi
     echo "---"
     if $hy_update_ok && $script_update_ok ; then _log_success "更新过程完成。"; else _log_warning "更新过程中遇到部分错误。请检查上面的日志。"; if ! $hy_update_ok; then _log_error " - Hysteria 程序更新失败或未更新。"; fi; if ! $script_update_ok; then _log_error " - 管理脚本 ${SCRIPT_COMMAND_NAME} 更新失败或未更新。"; fi; return 1; fi; return 0
@@ -499,8 +552,7 @@ _show_menu() {
 _show_management_commands_hint() { _log_info "您可使用 'sudo ${SCRIPT_COMMAND_NAME} help' 或不带参数运行 'sudo ${SCRIPT_COMMAND_NAME}' 查看管理命令面板。"; }
 
 # --- Main Script Logic ---
-# Ensure OS is detected for most commands early, unless it's a command that doesn't need root or OS details.
-if [[ "$1" != "version" && "$1" != "help" && "$1" != "" && "$1" != "-h" && "$1" != "--help" && "$1" != "update_script_version_test" ]]; then
+if [[ "$1" != "version" && "$1" != "help" && "$1" != "" && "$1" != "-h" && "$1" != "--help" ]]; then
     _detect_os;
 fi
 ACTION="$1"
@@ -523,7 +575,7 @@ case "$ACTION" in
     logs_sys)         _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "按 CTRL+C 退出 (journalctl -f)。"; journalctl -u "$CURRENT_HYSTERIA_SERVICE_NAME" -f --no-pager; else _log_error "此命令仅适用于 systemd 系统。"; fi ;;
     version)
         echo "$SCRIPT_COMMAND_NAME 管理脚本 v$SCRIPT_VERSION ($SCRIPT_DATE)"; echo "脚本文件: $SCRIPT_FILE_BASENAME"
-        if ! _is_hysteria_installed && ! _detect_os >/dev/null 2>&1; then :; fi # Light detection if not already done
+        if ! _is_hysteria_installed && ! _detect_os >/dev/null 2>&1; then :; fi
 
         if _is_hysteria_installed && command -v "$HYSTERIA_INSTALL_PATH" &>/dev/null; then
             HY_VERSION=$("$HYSTERIA_INSTALL_PATH" version 2>/dev/null | grep '^Version:' | awk '{print $2}')
