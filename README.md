@@ -48,8 +48,7 @@ sudo hy restart        # 重启服务
 sudo hy status         # 查看服务状态
 sudo hy enable         # 设置开机启动
 sudo hy disable        # 禁用开机启动
-sudo hy info           # 显示订阅链接
-sudo hy qrcode         # 显示订阅二维码（需安装 qrencode）
+sudo hy info           # 显示节点订阅
 sudo hy config         # 显示配置摘要
 sudo hy config_edit    # 编辑配置文件
 sudo hy config_change  # 交互修改端口、密码、伪装 URL
