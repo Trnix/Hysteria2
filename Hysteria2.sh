@@ -4,7 +4,7 @@
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
 SCRIPT_VERSION="1.5.5" # Incremented for final Alpine OpenRC and qrencode fixes
-SCRIPT_DATE="2025-05-09" 
+SCRIPT_DATE="2025-05-09"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
 
@@ -12,14 +12,14 @@ HYSTERIA_INSTALL_PATH="/usr/local/bin/hysteria"
 HYSTERIA_CONFIG_DIR="/etc/hysteria"
 HYSTERIA_CONFIG_FILE="${HYSTERIA_CONFIG_DIR}/config.yaml"
 HYSTERIA_CERTS_DIR="${HYSTERIA_CONFIG_DIR}/certs"
-HYSTERIA_INSTALL_VARS_FILE="${HYSTERIA_CONFIG_DIR}/install_vars.conf" 
+HYSTERIA_INSTALL_VARS_FILE="${HYSTERIA_CONFIG_DIR}/install_vars.conf"
 HYSTERIA_SERVICE_NAME_SYSTEMD="hysteria.service"
-HYSTERIA_SERVICE_NAME_OPENRC="hysteria" 
+HYSTERIA_SERVICE_NAME_OPENRC="hysteria"
 LOG_FILE_OUT="/var/log/hysteria.log"
 LOG_FILE_ERR="/var/log/hysteria.error.log"
 
 # --- Color Definitions ---
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BLUE='\033[0;34m'; NC='\033[0m' 
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 
 # --- Global OS Detection Variables ---
 DISTRO_FAMILY=""; PKG_INSTALL_CMD=""; PKG_UPDATE_CMD=""; PKG_REMOVE_CMD=""
@@ -40,44 +40,44 @@ _detect_os() {
     if [ -n "$DISTRO_FAMILY" ]; then return 0; fi
     if [ -f /etc/os-release ]; then . /etc/os-release; if [[ "$ID" == "alpine" ]]; then DISTRO_FAMILY="alpine"; elif [[ "$ID" == "debian" || "$ID" == "ubuntu" || "$ID_LIKE" == "debian" || "$ID_LIKE" == "ubuntu" ]]; then DISTRO_FAMILY="debian"; else _log_error "不支持发行版 '$ID'."; exit 1; fi
     elif command -v apk >/dev/null 2>&1; then DISTRO_FAMILY="alpine"; elif command -v apt-get >/dev/null 2>&1; then DISTRO_FAMILY="debian"; else _log_error "无法确定发行版."; exit 1; fi
-    
-    if [[ "$DISTRO_FAMILY" == "alpine" ]]; then 
+
+    if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
         PKG_INSTALL_CMD="apk add --no-cache"; PKG_UPDATE_CMD="apk update"; PKG_REMOVE_CMD="apk del"
-        INIT_SYSTEM="openrc"; SERVICE_CMD="rc-service"; 
+        INIT_SYSTEM="openrc"; SERVICE_CMD="rc-service";
         ENABLE_CMD_PREFIX="rc-update add"; ENABLE_CMD_SUFFIX="default"
         SETCAP_DEPENDENCY_PKG="libcap"; REQUIRED_PKGS_OS_SPECIFIC="openrc"
         CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_OPENRC"
-    elif [[ "$DISTRO_FAMILY" == "debian" ]]; then 
+    elif [[ "$DISTRO_FAMILY" == "debian" ]]; then
         export DEBIAN_FRONTEND=noninteractive; PKG_INSTALL_CMD="apt-get install -y -q"; PKG_UPDATE_CMD="apt-get update -q"; PKG_REMOVE_CMD="apt-get remove -y -q"
-        INIT_SYSTEM="systemd"; SERVICE_CMD="systemctl"; 
-        ENABLE_CMD_PREFIX="systemctl enable"; ENABLE_CMD_SUFFIX="" 
+        INIT_SYSTEM="systemd"; SERVICE_CMD="systemctl";
+        ENABLE_CMD_PREFIX="systemctl enable"; ENABLE_CMD_SUFFIX=""
         SETCAP_DEPENDENCY_PKG="libcap2-bin"; REQUIRED_PKGS_OS_SPECIFIC=""
-        CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_SYSTEMD" 
+        CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_SYSTEMD"
     fi
 }
 
 _is_hysteria_installed() { _detect_os; if [ -f "$HYSTERIA_INSTALL_PATH" ] && [ -f "$HYSTERIA_CONFIG_FILE" ]; then if [ "$INIT_SYSTEM" == "systemd" ] && [ -f "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME" ]; then return 0; elif [ "$INIT_SYSTEM" == "openrc" ] && [ -f "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME" ]; then return 0; fi; fi; return 1; }
 
-_install_dependencies() { 
+_install_dependencies() {
     _log_info "更新包列表(${DISTRO_FAMILY})..."
-    local alpine_repo_modified_by_script=false 
+    local alpine_repo_modified_by_script=false
 
     if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
         _log_info "Alpine: 正在确保 community repository 已启用..."
         local repo_file="/etc/apk/repositories"
         local community_repo_active_pattern="^[^#][[:space:]]*http[s]?:\/\/.*\/alpine\/v[0-9.]+\/community"
-        
+
         if ! grep -q -E "$community_repo_active_pattern" "$repo_file"; then
             _log_info "Alpine community repository 未启用或被注释，尝试处理..."
             if [ ! -w "$repo_file" ]; then _log_error "无法写入 Alpine 仓库文件 $repo_file。"; else
                 _log_info "修改前 /etc/apk/repositories 内容:"; cat "$repo_file"
-                cp "$repo_file" "${repo_file}.bak_hy_$(date +%s)" 
+                cp "$repo_file" "${repo_file}.bak_hy_$(date +%s)"
                 _log_info "尝试取消注释所有匹配的 community repository 行..."
                 sed -i -E 's/^#[[:space:]]*([[:print:]]*\/alpine\/v[0-9.]+\/community)/\1/g' "$repo_file"
                 if grep -q -E "$community_repo_active_pattern" "$repo_file"; then _log_success "已取消注释一个或多个 community repository。"; alpine_repo_modified_by_script=true;
                 else _log_warning "未找到可取消注释的 community repository 行，或取消注释失败。"
-                    if [ -f /etc/os-release ]; then . /etc/os-release 
-                        local alpine_version_major_minor=$(echo "$VERSION_ID" | cut -d. -f1-2) 
+                    if [ -f /etc/os-release ]; then . /etc/os-release
+                        local alpine_version_major_minor=$(echo "$VERSION_ID" | cut -d. -f1-2)
                         if [ -n "$alpine_version_major_minor" ]; then
                             local community_line_to_add="http://dl-cdn.alpinelinux.org/alpine/v${alpine_version_major_minor}/community"
                             _log_info "尝试添加默认 community repository: $community_line_to_add"
@@ -86,39 +86,39 @@ _install_dependencies() {
                         else _log_warning "无法从 /etc/os-release 获取 Alpine 版本号。"; fi
                     else _log_warning "/etc/os-release 文件未找到。"; fi
                 fi; _log_info "修改后 /etc/apk/repositories 内容:"; cat "$repo_file"
-            fi 
+            fi
             if $alpine_repo_modified_by_script; then _log_info "Alpine 仓库配置已修改，强制执行 apk update (显示输出)..."; if ! apk update; then _log_error "修改仓库后执行 apk update 失败。"; else _log_success "修改仓库后 apk update 执行成功。"; fi
             else _log_warning "脚本未修改 Alpine community repository。"; fi
         else _log_info "Alpine community repository 已启用。"; fi
         _log_info "为 Alpine 执行最终 apk update (确保最新列表，显示输出)..."; if ! apk update; then _log_warning "Alpine apk update 失败。"; fi
-        _log_info "尝试搜索 qrencode 相关包 (apk search -v qrencode)..."; apk search -v qrencode 
+        _log_info "尝试搜索 qrencode 相关包 (apk search -v qrencode)..."; apk search -v qrencode
     elif [[ "$DISTRO_FAMILY" == "debian" ]]; then if ! $PKG_UPDATE_CMD >/dev/null; then _log_warning "Debian/Ubuntu 更新列表失败。"; fi; fi
-    
-    local qrencode_pkg_name="qrencode" 
+
+    local qrencode_pkg_name="qrencode"
     if [[ "$DISTRO_FAMILY" == "alpine" ]]; then qrencode_pkg_name="libqrencode-tools"; fi
-    REQUIRED_PKGS_COMMON="wget curl git openssl lsof coreutils ${qrencode_pkg_name}" 
-    
+    REQUIRED_PKGS_COMMON="wget curl git openssl lsof coreutils ${qrencode_pkg_name}"
+
     REQUIRED_PKGS="$REQUIRED_PKGS_COMMON"
     if [ -n "$REQUIRED_PKGS_OS_SPECIFIC" ]; then REQUIRED_PKGS="$REQUIRED_PKGS $REQUIRED_PKGS_OS_SPECIFIC"; fi
-    
+
     if ! command -v realpath &>/dev/null && [[ "$DISTRO_FAMILY" == "debian" || "$DISTRO_FAMILY" == "alpine" ]]; then _log_info "确保 realpath 命令可用 (通过 coreutils)..."; if ! $PKG_INSTALL_CMD coreutils > /dev/null; then _log_warning "尝试安装/确保 coreutils 失败。"; fi; if ! command -v realpath &>/dev/null; then _log_error "realpath 命令在安装 coreutils 后仍然不可用。"; exit 1; fi; fi
-    
-    for pkg in $REQUIRED_PKGS; do 
+
+    for pkg in $REQUIRED_PKGS; do
         installed=false
         if [[ "$DISTRO_FAMILY" == "alpine" ]]; then if apk info -e "$pkg" &>/dev/null; then installed=true; fi
         elif [[ "$DISTRO_FAMILY" == "debian" ]]; then if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then installed=true; fi; fi
-        
-        if $installed; then 
+
+        if $installed; then
             _log_info "$pkg 已安装。"
-        else 
+        else
             _log_info "正在安装 $pkg..."
-            if ! $PKG_INSTALL_CMD "$pkg"; then 
+            if ! $PKG_INSTALL_CMD "$pkg"; then
                 _log_error "安装 $pkg 失败。请检查上面的输出。"
                 exit 1
             fi
         fi
     done
-    _log_success "依赖包安装成功。" 
+    _log_success "依赖包安装成功。"
 }
 
 _generate_uuid() { local bytes=$(od -x -N 16 /dev/urandom | head -1 | awk '{OFS=""; $1=""; print}'); local byte7=${bytes:12:4}; byte7=$((0x${byte7} & 0x0fff | 0x4000)); byte7=$(printf "%04x" $byte7); local byte9=${bytes:20:4}; byte9=$((0x${byte9} & 0x3fff | 0x8000)); byte9=$(printf "%04x" $byte9); echo "${bytes:0:8}-${bytes:8:4}-${byte7}-${byte9}-${bytes:24:12}" | tr '[:upper:]' '[:lower:]'; }
@@ -126,15 +126,14 @@ _generate_random_lowercase_string() { LC_ALL=C tr -dc 'a-z' < /dev/urandom | hea
 _get_server_address() { local ipv6_ip; local ipv4_ip; _log_info "检测公网IP..."; _log_info "尝试IPv6..."; ipv6_ip=$(curl -s -m 5 -6 https://ifconfig.me || curl -s -m 5 -6 https://ip.sb || curl -s -m 5 -6 https://api64.ipify.org); if [ -n "$ipv6_ip" ] && [[ "$ipv6_ip" == *":"* ]]; then _log_success "IPv6: $ipv6_ip"; echo "[$ipv6_ip]"; return; else _log_warning "无IPv6."; fi; _log_info "尝试IPv4..."; ipv4_ip=$(curl -s -m 5 -4 https://ifconfig.me || curl -s -m 5 -4 https://ip.sb || curl -s -m 5 -4 https://api.ipify.org); if [ -n "$ipv4_ip" ] && [[ "$ipv4_ip" != *":"* ]]; then _log_success "IPv4: $ipv4_ip"; echo "$ipv4_ip"; return; else _log_warning "无IPv4."; fi; _log_error "无法获取公网IP."; exit 1; }
 
 _setup_hy_command() {
-    # ... (Function remains the same as previous version) ...
-    _ensure_root; _log_info "设置'${SCRIPT_COMMAND_NAME}'命令到/usr/local/bin/${SCRIPT_COMMAND_NAME}..."; 
-    if [[ "$HY_SCRIPT_URL_ON_GITHUB" == *"YOUR_USERNAME"* || "$HY_SCRIPT_URL_ON_GITHUB" == *"YOUR_REPONAME"* || "$HY_SCRIPT_URL_ON_GITHUB" == *"YOUR_BRANCH"* ]]; then 
-        _log_error "HY_SCRIPT_URL_ON_GITHUB 未配置!"; _log_warning "请编辑脚本设置URL或手动复制: sudo cp \"${0:-${SCRIPT_FILE_BASENAME}}\" /usr/local/bin/${SCRIPT_COMMAND_NAME} && sudo chmod +x /usr/local/bin/${SCRIPT_COMMAND_NAME}"; 
-        return 1 
+    _ensure_root; _log_info "设置'${SCRIPT_COMMAND_NAME}'命令到/usr/local/bin/${SCRIPT_COMMAND_NAME}...";
+    if [[ "$HY_SCRIPT_URL_ON_GITHUB" == *"YOUR_USERNAME"* || "$HY_SCRIPT_URL_ON_GITHUB" == *"YOUR_REPONAME"* || "$HY_SCRIPT_URL_ON_GITHUB" == *"YOUR_BRANCH"* ]]; then
+        _log_error "HY_SCRIPT_URL_ON_GITHUB 未配置!"; _log_warning "请编辑脚本设置URL或手动复制: sudo cp \"${0:-${SCRIPT_FILE_BASENAME}}\" /usr/local/bin/${SCRIPT_COMMAND_NAME} && sudo chmod +x /usr/local/bin/${SCRIPT_COMMAND_NAME}";
+        return 1
     fi
-    _log_info "从URL($HY_SCRIPT_URL_ON_GITHUB)下载..."; TMP_SCRIPT_DOWNLOAD_PATH=$(mktemp); 
-    if wget -qO "$TMP_SCRIPT_DOWNLOAD_PATH" "$HY_SCRIPT_URL_ON_GITHUB"; then 
-        if head -n 1 "$TMP_SCRIPT_DOWNLOAD_PATH" | grep -q -E "^#!/(usr/)?bin/(bash|sh)"; then 
+    _log_info "从URL($HY_SCRIPT_URL_ON_GITHUB)下载..."; TMP_SCRIPT_DOWNLOAD_PATH=$(mktemp);
+    if wget -qO "$TMP_SCRIPT_DOWNLOAD_PATH" "$HY_SCRIPT_URL_ON_GITHUB"; then
+        if head -n 1 "$TMP_SCRIPT_DOWNLOAD_PATH" | grep -q -E "^#!/(usr/)?bin/(bash|sh)"; then
             local current_hy_version_installed=""
             local downloaded_hy_version_script=""
             if [ -f "/usr/local/bin/${SCRIPT_COMMAND_NAME}" ]; then
@@ -143,26 +142,25 @@ _setup_hy_command() {
             downloaded_hy_version_script=$(grep '^SCRIPT_VERSION=' "$TMP_SCRIPT_DOWNLOAD_PATH" | head -n 1 | cut -d'"' -f2)
 
             if [ -n "$current_hy_version_installed" ] && [ -n "$downloaded_hy_version_script" ] && [[ "$current_hy_version_installed" == "$downloaded_hy_version_script" ]]; then
-                 _log_success "'${SCRIPT_COMMAND_NAME}' 脚本已是最新版本 ($current_hy_version_installed)。"
-                 rm -f "$TMP_SCRIPT_DOWNLOAD_PATH"
-                 return 0
+                _log_success "'${SCRIPT_COMMAND_NAME}' 脚本已是最新版本 ($current_hy_version_installed)。"
+                rm -f "$TMP_SCRIPT_DOWNLOAD_PATH"
+                return 0
             fi
             if [ -f "/usr/local/bin/${SCRIPT_COMMAND_NAME}" ]; then _log_info "备份现有命令..."; cp "/usr/local/bin/${SCRIPT_COMMAND_NAME}" "/usr/local/bin/${SCRIPT_COMMAND_NAME}.old.$(date +%s)"; fi
-            if mv "$TMP_SCRIPT_DOWNLOAD_PATH" "/usr/local/bin/${SCRIPT_COMMAND_NAME}"; then 
+            if mv "$TMP_SCRIPT_DOWNLOAD_PATH" "/usr/local/bin/${SCRIPT_COMMAND_NAME}"; then
                 chmod +x "/usr/local/bin/${SCRIPT_COMMAND_NAME}"; _log_success "'${SCRIPT_COMMAND_NAME}'命令已从 URL 安装/更新 (版本: ${downloaded_hy_version_script:-未知})。"; return 0
-            else 
+            else
                 _log_error "移动下载脚本失败."; rm -f "$TMP_SCRIPT_DOWNLOAD_PATH"; return 1
             fi
-        else 
+        else
             _log_error "下载内容非有效脚本. URL: $HY_SCRIPT_URL_ON_GITHUB"; _log_warning "开头: $(head -n 1 "$TMP_SCRIPT_DOWNLOAD_PATH")"; rm -f "$TMP_SCRIPT_DOWNLOAD_PATH"; return 1
         fi
-    else 
+    else
         _log_error "下载脚本失败."; rm -f "$TMP_SCRIPT_DOWNLOAD_PATH"; return 1
     fi
 }
 
 _get_link_params_from_config() {
-    # ... (Function remains the same as previous fixed version) ...
     unset HY_PASSWORD HY_LINK_ADDRESS HY_PORT HY_LINK_SNI HY_LINK_INSECURE HY_SNI_VALUE DOMAIN_FROM_CONFIG CERT_PATH_FROM_CONFIG KEY_PATH_FROM_CONFIG
     if [ ! -f "$HYSTERIA_CONFIG_FILE" ]; then _log_error "配置文件 $HYSTERIA_CONFIG_FILE 未找到。"; return 1; fi
     _log_info "正从 $HYSTERIA_CONFIG_FILE 解析配置以生成链接..."
@@ -174,8 +172,8 @@ _get_link_params_from_config() {
         if [ -z "$DOMAIN_FROM_CONFIG" ]; then _log_error "无法从配置解析ACME域名。"; return 1; fi
         HY_LINK_SNI="$DOMAIN_FROM_CONFIG"; HY_LINK_ADDRESS="$DOMAIN_FROM_CONFIG"; HY_LINK_INSECURE="0"; HY_SNI_VALUE="$DOMAIN_FROM_CONFIG"
     elif grep -q '^\s*tls:' "$HYSTERIA_CONFIG_FILE"; then
-         _log_info "检测到自定义 TLS 配置。"
-         CERT_PATH_FROM_CONFIG=$(grep '^\s*cert:' "$HYSTERIA_CONFIG_FILE" | head -n 1 | sed -e 's/^\s*cert:[[:space:]]*//' -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/^["'\'']//' -e 's/["'\'']$//' || echo "")
+        _log_info "检测到自定义 TLS 配置。"
+        CERT_PATH_FROM_CONFIG=$(grep '^\s*cert:' "$HYSTERIA_CONFIG_FILE" | head -n 1 | sed -e 's/^\s*cert:[[:space:]]*//' -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/^["'\'']//' -e 's/["'\'']$//' || echo "")
         if [ -z "$CERT_PATH_FROM_CONFIG" ]; then _log_error "无法从配置解析证书路径。"; return 1; fi
         if [[ "$CERT_PATH_FROM_CONFIG" != /* ]]; then CERT_PATH_FROM_CONFIG="${HYSTERIA_CONFIG_DIR}/${CERT_PATH_FROM_CONFIG}"; fi
         if command -v realpath &>/dev/null; then CERT_PATH_FROM_CONFIG=$(realpath -m "$CERT_PATH_FROM_CONFIG" 2>/dev/null || echo "$CERT_PATH_FROM_CONFIG"); fi
@@ -191,11 +189,10 @@ _get_link_params_from_config() {
 }
 
 _display_link_and_qrcode() {
-    # ... (Function remains the same as previous version) ...
     SUBSCRIPTION_LINK="hysteria2://${HY_PASSWORD}@${HY_LINK_ADDRESS}:${HY_PORT}/?sni=${HY_LINK_SNI}&alpn=h3&insecure=${HY_LINK_INSECURE}#Hysteria-${HY_SNI_VALUE}"
     echo ""; _log_info "Hysteria2 订阅链接 (根据当前配置生成):"
     echo -e "${GREEN}${SUBSCRIPTION_LINK}${NC}"
-    echo "" 
+    echo ""
     if command -v qrencode &>/dev/null; then
         _log_info "Hysteria2 订阅链接二维码:"
         qrencode -t ANSIUTF8 "$SUBSCRIPTION_LINK"
@@ -203,11 +200,10 @@ _display_link_and_qrcode() {
         _log_warning "提示: 'qrencode' 未安装, 无法显示二维码。"
         _log_info "(可运行 'sudo $PKG_INSTALL_CMD qrencode' 安装)"
     fi
-    echo "" 
+    echo ""
 }
 
 _do_install() {
-    # ... (Function remains the same as previous version) ...
     _ensure_root; _detect_os
     if _is_hysteria_installed; then _read_confirm_tty confirm_install "Hysteria 已安装。是否强制安装(覆盖配置)? [y/N]: "; if [[ "$confirm_install" != "y" && "$confirm_install" != "Y" ]]; then _log_info "安装取消。"; exit 0; fi; _log_warning "正强制安装..."; fi
     _install_dependencies # Now installs qrencode by default
@@ -215,8 +211,8 @@ _do_install() {
     echo ""; _log_info "请选择 TLS 验证方式:"; echo "1. 自定义证书"; echo "2. ACME HTTP 验证"; _read_from_tty TLS_TYPE "选择 [1-2, 默认 1]: "; TLS_TYPE=${TLS_TYPE:-1}
     CERT_PATH=""; KEY_PATH=""; DOMAIN=""; SNI_VALUE=""; ACME_EMAIL=""
     case $TLS_TYPE in 1) _log_info "--- 自定义证书模式 ---"; _read_from_tty USER_CERT_PATH "证书路径(.crt/.pem)(留空则自签): ";
-            if [ -z "$USER_CERT_PATH" ]; then _log_info "将生成自签名证书。"; if ! command -v openssl &>/dev/null; then _log_error "openssl未安装 ($PKG_INSTALL_CMD openssl)"; exit 1; fi; _read_from_tty SELF_SIGN_SNI "自签名证书SNI(默认www.bing.com): "; SELF_SIGN_SNI=${SELF_SIGN_SNI:-"www.bing.com"}; SNI_VALUE="$SELF_SIGN_SNI"; mkdir -p "$HYSTERIA_CERTS_DIR"; CERT_PATH="$HYSTERIA_CERTS_DIR/server.crt"; KEY_PATH="$HYSTERIA_CERTS_DIR/server.key"; _log_info "正生成自签证书(CN=$SNI_VALUE)..."; if ! openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) -keyout "$KEY_PATH" -out "$CERT_PATH" -subj "/CN=$SNI_VALUE" -days 36500; then _log_error "自签证书生成失败!"; exit 1; fi; _log_success "自签证书已生成: $CERT_PATH, $KEY_PATH";
-            else _log_info "提供证书路径: $USER_CERT_PATH"; _read_from_tty USER_KEY_PATH "私钥路径(.key/.pem): "; if [ -z "$USER_KEY_PATH" ]; then _log_error "私钥路径不能为空。"; exit 1; fi; TMP_CERT_PATH=$(realpath "$USER_CERT_PATH" 2>/dev/null); TMP_KEY_PATH=$(realpath "$USER_KEY_PATH" 2>/dev/null); if [ ! -f "$TMP_CERT_PATH" ]; then _log_error "证书'$USER_CERT_PATH'('$TMP_CERT_PATH')无效."; exit 1; fi; if [ ! -f "$TMP_KEY_PATH" ]; then _log_error "私钥'$USER_KEY_PATH'('$TMP_KEY_PATH')无效."; exit 1; fi; CERT_PATH="$TMP_CERT_PATH"; KEY_PATH="$TMP_KEY_PATH"; SNI_VALUE=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$CERT_PATH" 2>/dev/null | sed -n 's/.*CN=\([^,]*\).*/\1/p'); if [ -z "$SNI_VALUE" ]; then SNI_VALUE=$(openssl x509 -noout -subject -in "$CERT_PATH" 2>/dev/null | sed -n 's/.*CN ?= ?\([^,]*\).*/\1/p' | head -n 1 | sed 's/^[ \t]*//;s/[ \t]*$//'); fi; if [ -z "$SNI_VALUE" ]; then SNI_VALUE=$(openssl x509 -noout -text -in "$CERT_PATH" 2>/dev/null | grep 'DNS:' | head -n 1 | sed 's/.*DNS://' | tr -d ' ' | cut -d, -f1); fi; if [ -z "$SNI_VALUE" ]; then _read_from_tty MANUAL_SNI "无法提取SNI, 请手动输入: "; if [ -z "$MANUAL_SNI" ]; then _log_error "SNI不能为空!"; exit 1; fi; SNI_VALUE="$MANUAL_SNI"; else _log_info "提取到SNI: $SNI_VALUE"; fi; fi;;
+        if [ -z "$USER_CERT_PATH" ]; then _log_info "将生成自签名证书。"; if ! command -v openssl &>/dev/null; then _log_error "openssl未安装 ($PKG_INSTALL_CMD openssl)"; exit 1; fi; _read_from_tty SELF_SIGN_SNI "自签名证书SNI(默认www.bing.com): "; SELF_SIGN_SNI=${SELF_SIGN_SNI:-"www.bing.com"}; SNI_VALUE="$SELF_SIGN_SNI"; mkdir -p "$HYSTERIA_CERTS_DIR"; CERT_PATH="$HYSTERIA_CERTS_DIR/server.crt"; KEY_PATH="$HYSTERIA_CERTS_DIR/server.key"; _log_info "正生成自签证书(CN=$SNI_VALUE)..."; if ! openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) -keyout "$KEY_PATH" -out "$CERT_PATH" -subj "/CN=$SNI_VALUE" -days 36500; then _log_error "自签证书生成失败!"; exit 1; fi; _log_success "自签证书已生成: $CERT_PATH, $KEY_PATH";
+        else _log_info "提供证书路径: $USER_CERT_PATH"; _read_from_tty USER_KEY_PATH "私钥路径(.key/.pem): "; if [ -z "$USER_KEY_PATH" ]; then _log_error "私钥路径不能为空。"; exit 1; fi; TMP_CERT_PATH=$(realpath "$USER_CERT_PATH" 2>/dev/null); TMP_KEY_PATH=$(realpath "$USER_KEY_PATH" 2>/dev/null); if [ ! -f "$TMP_CERT_PATH" ]; then _log_error "证书'$USER_CERT_PATH'('$TMP_CERT_PATH')无效."; exit 1; fi; if [ ! -f "$TMP_KEY_PATH" ]; then _log_error "私钥'$USER_KEY_PATH'('$TMP_KEY_PATH')无效."; exit 1; fi; CERT_PATH="$TMP_CERT_PATH"; KEY_PATH="$TMP_KEY_PATH"; SNI_VALUE=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$CERT_PATH" 2>/dev/null | sed -n 's/.*CN=\([^,]*\).*/\1/p'); if [ -z "$SNI_VALUE" ]; then SNI_VALUE=$(openssl x509 -noout -subject -in "$CERT_PATH" 2>/dev/null | sed -n 's/.*CN ?= ?\([^,]*\).*/\1/p' | head -n 1 | sed 's/^[ \t]*//;s/[ \t]*$//'); fi; if [ -z "$SNI_VALUE" ]; then SNI_VALUE=$(openssl x509 -noout -text -in "$CERT_PATH" 2>/dev/null | grep 'DNS:' | head -n 1 | sed 's/.*DNS://' | tr -d ' ' | cut -d, -f1); fi; if [ -z "$SNI_VALUE" ]; then _read_from_tty MANUAL_SNI "无法提取SNI, 请手动输入: "; if [ -z "$MANUAL_SNI" ]; then _log_error "SNI不能为空!"; exit 1; fi; SNI_VALUE="$MANUAL_SNI"; else _log_info "提取到SNI: $SNI_VALUE"; fi; fi;;
         2) _log_info "--- ACME HTTP 验证 ---"; _read_from_tty DOMAIN "域名(eg: example.com): "; if [ -z "$DOMAIN" ]; then _log_error "域名不能为空!"; exit 1; fi; _read_from_tty INPUT_ACME_EMAIL "ACME邮箱(默认 $DEFAULT_ACME_EMAIL): "; ACME_EMAIL=${INPUT_ACME_EMAIL:-$DEFAULT_ACME_EMAIL}; if [ -z "$ACME_EMAIL" ]; then _log_error "邮箱不能为空!"; exit 1; fi; SNI_VALUE=$DOMAIN; _log_info "检查80端口..."; if lsof -i:80 -sTCP:LISTEN -P -n &>/dev/null; then _log_warning "80端口被占用!"; PID_80=$(lsof -t -i:80 -sTCP:LISTEN); [ -n "$PID_80" ] && _log_info "占用进程PID: $PID_80"; else _log_info "80端口可用。"; fi;;
         *) _log_error "无效TLS选项。"; exit 1;;
     esac
@@ -251,14 +247,14 @@ tls:
   cert: $CERT_PATH
   key: $KEY_PATH
 EOF
-           LOCAL_LINK_SNI="$SNI_VALUE"; LOCAL_LINK_ADDRESS="$SERVER_PUBLIC_ADDRESS"; LOCAL_LINK_INSECURE=1; _log_warning "自定义证书客户端需设insecure:true";; 2) cat >> "$HYSTERIA_CONFIG_FILE" << EOF
+        LOCAL_LINK_SNI="$SNI_VALUE"; LOCAL_LINK_ADDRESS="$SERVER_PUBLIC_ADDRESS"; LOCAL_LINK_INSECURE=1; _log_warning "自定义证书客户端需设insecure:true";; 2) cat >> "$HYSTERIA_CONFIG_FILE" << EOF
 
 acme:
   domains:
     - $DOMAIN
   email: $ACME_EMAIL
 EOF
-           LOCAL_LINK_SNI="$DOMAIN"; LOCAL_LINK_ADDRESS="$DOMAIN"; LOCAL_LINK_INSECURE=0;; esac; _log_success "配置文件完成。"
+        LOCAL_LINK_SNI="$DOMAIN"; LOCAL_LINK_ADDRESS="$DOMAIN"; LOCAL_LINK_INSECURE=0;; esac; _log_success "配置文件完成。"
     if [ "$INIT_SYSTEM" == "systemd" ]; then _log_info "创建systemd服务..."; cat > "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME" << EOF
 [Unit]
 Description=Hysteria 2 Service by $SCRIPT_COMMAND_NAME
@@ -277,16 +273,16 @@ EOF
 # shellcheck shell=ash
 
 description="Hysteria 2 Proxy Server"
-supervisor=start-stop-daemon 
+supervisor=start-stop-daemon
 name="${HYSTERIA_SERVICE_NAME_OPENRC}" # Use the defined service name
 
 command="${HYSTERIA_INSTALL_PATH}"
 command_args="server --config ${HYSTERIA_CONFIG_FILE}"
-pidfile="/var/run/${RC_SVCNAME}.pid" 
-command_background=yes 
+pidfile="/var/run/${RC_SVCNAME}.pid"
+command_background=yes
 
-output_log="${LOG_FILE_OUT}" 
-error_log="${LOG_FILE_ERR}"   
+output_log="${LOG_FILE_OUT}"
+error_log="${LOG_FILE_ERR}"
 
 depend() {
     need net
@@ -305,10 +301,10 @@ EOF
     _control_service "enable"; _control_service "restart"
     sleep 2; if _control_service "status" > /dev/null; then _log_success "Hysteria服务已成功运行！"; else _log_error "Hysteria服务状态异常!"; fi
     _setup_hy_command
-    
+
     _log_success "Hysteria 2安装配置完成！"
     echo "------------------------------------------------------------------------"
-    if _get_link_params_from_config; then 
+    if _get_link_params_from_config; then
         _display_link_and_qrcode
     else
         _log_error "安装完成，但无法从配置文件生成最终的订阅链接和二维码信息。"
@@ -319,7 +315,6 @@ EOF
 }
 
 _do_uninstall() {
-    # ... (Function remains the same as previous version with streamlined prompts) ...
     _ensure_root; _detect_os
     _read_confirm_tty confirm_uninstall "这将卸载 Hysteria 2 并删除所有相关配置和文件。确定? [y/N]: "
     if [[ "$confirm_uninstall" != "y" && "$confirm_uninstall" != "Y" ]]; then _log_info "卸载取消。"; exit 0; fi
@@ -330,12 +325,12 @@ _do_uninstall() {
     _log_info "移除Hysteria二进制: $HYSTERIA_INSTALL_PATH"; rm -f "$HYSTERIA_INSTALL_PATH"
     _log_info "移除Hysteria配置: $HYSTERIA_CONFIG_DIR"; rm -rf "$HYSTERIA_CONFIG_DIR"
     _log_info "移除Hysteria日志: $LOG_FILE_OUT, $LOG_FILE_ERR"; rm -f "$LOG_FILE_OUT" "$LOG_FILE_ERR"
-    
+
     local qrencode_pkg_to_remove="qrencode"
     if [[ "$DISTRO_FAMILY" == "alpine" ]]; then qrencode_pkg_to_remove="libqrencode-tools"; fi
-    if command -v qrencode &>/dev/null || ([[ "$DISTRO_FAMILY" == "alpine" ]] && apk info -e "$qrencode_pkg_to_remove" &>/dev/null) ; then 
+    if command -v qrencode &>/dev/null || ([[ "$DISTRO_FAMILY" == "alpine" ]] && apk info -e "$qrencode_pkg_to_remove" &>/dev/null) ; then
         _log_info "尝试自动卸载 $qrencode_pkg_to_remove..."
-        if $PKG_REMOVE_CMD "$qrencode_pkg_to_remove" >/dev/null; then _log_success "$qrencode_pkg_to_remove 已卸载。"; 
+        if $PKG_REMOVE_CMD "$qrencode_pkg_to_remove" >/dev/null; then _log_success "$qrencode_pkg_to_remove 已卸载。";
         else _log_warning "卸载 $qrencode_pkg_to_remove 失败。"; fi
     fi
 
@@ -343,27 +338,118 @@ _do_uninstall() {
     _log_success "Hysteria 卸载完成。"
 }
 
+# ==========================================================================
+# START OF CORRECTED _control_service FUNCTION
+# ==========================================================================
 _control_service() {
-    # ... (Function remains the same as previous version) ...
     _detect_os; local action="$1"
-    local service_name_to_manage="$CURRENT_HYSTERIA_SERVICE_NAME" # Already correctly set in _detect_os
+    local service_name_to_manage="$CURRENT_HYSTERIA_SERVICE_NAME"
 
-    if [[ "$action" == "start" || "$action" == "stop" || "$action" == "restart" || "$action" == "status" ]]; then if ! _is_hysteria_installed; then _log_error "Hysteria未安装或服务未配置。请用'${SCRIPT_COMMAND_NAME} install'安装。"; return 1; fi; fi
-    case "$action" in start|stop|restart) _ensure_root; _log_info "执行: $SERVICE_CMD $action $service_name_to_manage"
-            if [[ "$INIT_SYSTEM" == "systemd" && "$action" == "stop" ]] && ! $SERVICE_CMD is-active --quiet "$service_name_to_manage"; then _log_info "服务($service_name_to_manage)已停止。"; return 0; fi
-            # For OpenRC, rc-service stop might return non-zero if already stopped, but that's fine.
-            if $SERVICE_CMD "$action" "$service_name_to_manage"; then _log_success "操作'$action'成功。"; if [[ "$action" == "start" || "$action" == "restart" ]]; then sleep 1; $SERVICE_CMD status "$service_name_to_manage" 2>/dev/null | head -n 5 || $SERVICE_CMD status "$service_name_to_manage"; fi
-            else _log_error "操作'$action'失败。"; _log_warning "请检查日志:"; echo "  输出: tail -n 30 $LOG_FILE_OUT"; echo "  错误: tail -n 30 $LOG_FILE_ERR"; if [ "$INIT_SYSTEM" == "systemd" ]; then echo "  Systemd状态: $SERVICE_CMD status $service_name_to_manage"; echo "  Systemd日志: journalctl -u $service_name_to_manage -n 20 --no-pager"; elif [ "$INIT_SYSTEM" == "openrc" ]; then echo "  OpenRC状态: $SERVICE_CMD $service_name_to_manage status"; fi; return 1; fi;;
-        status) _log_info "Hysteria服务状态($service_name_to_manage):"; $SERVICE_CMD "$action" "$service_name_to_manage"; return $?;;
-        enable) _ensure_root; _log_info "启用Hysteria开机自启..."; if $ENABLE_CMD_PREFIX "$service_name_to_manage" $ENABLE_CMD_SUFFIX >/dev/null 2>&1; then _log_success "已启用开机自启。"; else _log_error "启用开机自启失败。"; return 1; fi;;
-        disable) _ensure_root; _log_info "禁用Hysteria开机自启..."; if [[ "$INIT_SYSTEM" == "systemd" ]]; then $SERVICE_CMD disable "$service_name_to_manage" >/dev/null 2>&1; elif [[ "$INIT_SYSTEM" == "openrc" ]]; then rc-update del "$service_name_to_manage" default >/dev/null 2>&1; fi; _log_success "已禁用开机自启。";;
-        *) _log_error "未知服务操作: $action"; return 1;;
+    if [[ "$action" == "start" || "$action" == "stop" || "$action" == "restart" || "$action" == "status" ]]; then
+        if ! _is_hysteria_installed; then
+            _log_error "Hysteria未安装或服务未配置。请用'${SCRIPT_COMMAND_NAME} install'安装。"
+            return 1
+        fi
+    fi
+
+    local cmd_to_run_array # 使用数组来存储命令和参数，避免空格问题
+    local log_cmd_str      # 用于记录命令字符串
+
+    case "$action" in
+        start|stop|restart)
+            _ensure_root
+            if [[ "$INIT_SYSTEM" == "openrc" ]]; then
+                # 对于 OpenRC，命令格式为：rc-service 服务名 操作
+                cmd_to_run_array=("$SERVICE_CMD" "$service_name_to_manage" "$action")
+                log_cmd_str="$SERVICE_CMD $service_name_to_manage $action"
+            else # systemd
+                # 对于 systemd，命令格式为：systemctl 操作 服务名
+                cmd_to_run_array=("$SERVICE_CMD" "$action" "$service_name_to_manage")
+                log_cmd_str="$SERVICE_CMD $action $service_name_to_manage"
+            fi
+            _log_info "执行: $log_cmd_str"
+
+            if [[ "$INIT_SYSTEM" == "systemd" && "$action" == "stop" ]] && ! "$SERVICE_CMD" is-active --quiet "$service_name_to_manage"; then
+                _log_info "服务($service_name_to_manage)已停止。"
+                return 0
+            fi
+            # 对于 OpenRC，如果服务已停止，rc-service stop 可能会返回非零值，这是正常的。
+            # 下面的执行会捕获实际的退出码来判断成功或失败。
+
+            if "${cmd_to_run_array[@]}"; then # 使用数组执行命令
+                _log_success "操作'$action'成功。"
+                if [[ "$action" == "start" || "$action" == "restart" ]]; then
+                    sleep 1
+                    local status_cmd_array
+                    if [[ "$INIT_SYSTEM" == "openrc" ]]; then
+                        status_cmd_array=("$SERVICE_CMD" "$service_name_to_manage" "status")
+                    else # systemd
+                        status_cmd_array=("$SERVICE_CMD" "status" "$service_name_to_manage")
+                    fi
+                    # 显示状态信息的前5行，或者如果状态信息很短则显示全部
+                    "${status_cmd_array[@]}" 2>/dev/null | head -n 5 || "${status_cmd_array[@]}"
+                fi
+            else
+                _log_error "操作'$action'失败。"
+                _log_warning "请检查日志:"
+                echo "  输出: tail -n 30 $LOG_FILE_OUT"
+                echo "  错误: tail -n 30 $LOG_FILE_ERR"
+                if [ "$INIT_SYSTEM" == "systemd" ]; then
+                    echo "  Systemd状态: $SERVICE_CMD status $service_name_to_manage"
+                    echo "  Systemd日志: journalctl -u $service_name_to_manage -n 20 --no-pager"
+                elif [ "$INIT_SYSTEM" == "openrc" ]; then
+                    # 此处的日志提示已经使用了正确的 OpenRC status 语法
+                    echo "  OpenRC状态: $SERVICE_CMD $service_name_to_manage status"
+                fi
+                return 1
+            fi
+            ;;
+        status)
+            _log_info "Hysteria服务状态($service_name_to_manage):"
+            if [[ "$INIT_SYSTEM" == "openrc" ]]; then
+                cmd_to_run_array=("$SERVICE_CMD" "$service_name_to_manage" "$action")
+            else # systemd
+                cmd_to_run_array=("$SERVICE_CMD" "$action" "$service_name_to_manage")
+            fi
+            "${cmd_to_run_array[@]}"
+            return $?
+            ;;
+        enable)
+            _ensure_root
+            _log_info "启用Hysteria开机自启..."
+            # ENABLE_CMD_PREFIX 和 ENABLE_CMD_SUFFIX 已经为不同系统正确定义
+            # systemd: systemctl enable hysteria.service
+            # openrc:  rc-update add hysteria default
+            if "$ENABLE_CMD_PREFIX" "$service_name_to_manage" $ENABLE_CMD_SUFFIX >/dev/null 2>&1; then
+                _log_success "已启用开机自启。"
+            else
+                _log_error "启用开机自启失败。"
+                return 1
+            fi
+            ;;
+        disable)
+            _ensure_root
+            _log_info "禁用Hysteria开机自启..."
+            if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+                "$SERVICE_CMD" disable "$service_name_to_manage" >/dev/null 2>&1
+            elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
+                # openrc: rc-update del <服务名> default
+                rc-update del "$service_name_to_manage" default >/dev/null 2>&1
+            fi
+            _log_success "已禁用开机自启。"
+            ;;
+        *)
+            _log_error "未知服务操作: $action"
+            return 1
+            ;;
     esac
 }
+# ==========================================================================
+# END OF CORRECTED _control_service FUNCTION
+# ==========================================================================
 
 _show_config() {
-    # ... (Function remains the same as previous version with improved parsing) ...
-     _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria未安装。无配置显示。"; return 1; fi
+    _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria未安装。无配置显示。"; return 1; fi
     _log_info "当前Hysteria配置文件($HYSTERIA_CONFIG_FILE):"; echo "----------------------------------------------------"
     if [ -f "$HYSTERIA_CONFIG_FILE" ]; then cat "$HYSTERIA_CONFIG_FILE"; else _log_error "配置文件不存在。"; fi; echo "----------------------------------------------------"; _log_info "配置摘要:"
     local port=$(grep -E '^\s*listen:\s*:([0-9]+)' "$HYSTERIA_CONFIG_FILE" | sed -E 's/^\s*listen:\s*://' || echo "未知")
@@ -376,7 +462,6 @@ _show_config() {
 }
 
 _change_config_interactive() {
-    # ... (Function remains the same as previous version) ...
     _ensure_root; _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria未安装。无法更改。"; return 1; fi
     _log_info "更改Hysteria配置(部分)"; _log_warning "此功能通过awk/sed修改配置,复杂情况可能不健壮。"; _log_warning "强烈建议备份$HYSTERIA_CONFIG_FILE。"; _log_warning "当前支持:监听端口,密码,伪装URL。"; _log_warning "如需更改TLS模式等重大配置, 请使用 'sudo ${SCRIPT_COMMAND_NAME} install' 命令。"
     CURRENT_PORT=$(grep -E '^\s*listen:\s*:([0-9]+)' "$HYSTERIA_CONFIG_FILE" | sed -E 's/^\s*listen:\s*://' || echo ""); CURRENT_PASSWORD_RAW=$(grep 'password:' "$HYSTERIA_CONFIG_FILE" | head -n 1 | sed -e 's/^.*password:[[:space:]]*//' -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/["'\'']//g' || echo ""); CURRENT_MASQUERADE=$(grep '^\s*masquerade:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*url: \([^, }]*\).*/\1/p' || echo ""); if [ -z "$CURRENT_MASQUERADE" ]; then CURRENT_MASQUERADE=$(awk '/^\s*masquerade:/,/url:/{if(/url:/) print $2}' "$HYSTERIA_CONFIG_FILE" || echo ""); fi
@@ -392,8 +477,7 @@ _change_config_interactive() {
 }
 
 _update_hysteria_binary() {
-    # ... (Function remains the same as previous version with improved version parsing/comparison) ...
-     _ensure_root; _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。无法更新。"; return 1; fi
+    _ensure_root; _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。无法更新。"; return 1; fi
     _log_info "检查 Hysteria 程序更新..."; VERSION_OUTPUT=$("$HYSTERIA_INSTALL_PATH" version 2>/dev/null); CURRENT_VER=$(echo "$VERSION_OUTPUT" | grep '^Version:' | awk '{print $2}'); if [ -z "$CURRENT_VER" ]; then _log_warning "无法获取当前版本。尝试下载最新。"; CURRENT_VER="unknown"; else _log_info "当前版本: $CURRENT_VER"; fi
     _log_info "获取最新版本号..."; LATEST_VER_TAG=$(curl -s --connect-timeout 5 "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'); if [ -z "$LATEST_VER_TAG" ]; then _log_warning "无法从 GitHub API 获取版本号。尝试下载'latest'。"; LATEST_VER_CLEAN="latest"; else LATEST_VER_CLEAN=$(echo "$LATEST_VER_TAG" | sed 's#^app/##'); _log_info "最新版本 Tag: $LATEST_VER_TAG (比较版本: $LATEST_VER_CLEAN)"; if [[ "$CURRENT_VER" == "$LATEST_VER_CLEAN" && "$CURRENT_VER" != "unknown" ]]; then _log_success "当前已是最新版本 ($CURRENT_VER)。"; return 0; fi; fi
     _log_info "下载 Hysteria (版本: ${LATEST_VER_CLEAN:-latest}) ..."; ARCH=$(uname -m); case ${ARCH} in x86_64) HYSTERIA_ARCH="amd64";; aarch64) HYSTERIA_ARCH="arm64";; armv7l) HYSTERIA_ARCH="arm";; *) _log_error "不支持架构: ${ARCH}"; return 1;; esac; TMP_HY_DOWNLOAD=$(mktemp); DOWNLOAD_URL="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HYSTERIA_ARCH}"; if ! wget -qO "$TMP_HY_DOWNLOAD" "$DOWNLOAD_URL"; then _log_error "下载失败! URL: $DOWNLOAD_URL"; rm -f "$TMP_HY_DOWNLOAD"; return 1; fi
@@ -401,9 +485,8 @@ _update_hysteria_binary() {
     _log_info "准备替换..."; _control_service "stop"; sleep 1; if mv "$TMP_HY_DOWNLOAD" "$HYSTERIA_INSTALL_PATH"; then _log_success "Hysteria已更新至$DOWNLOADED_VER(或latest)。"; if getcap "$HYSTERIA_INSTALL_PATH" 2>/dev/null | grep -q "cap_net_bind_service"; then _log_info "重应用setcap权限..."; if ! setcap 'cap_net_bind_service=+ep' "$HYSTERIA_INSTALL_PATH"; then _log_warning "重应用setcap失败。"; fi; fi; _control_service "start"; return 0; else _log_error "替换失败。"; rm -f "$TMP_HY_DOWNLOAD"; _log_info "尝试重启旧服务..."; _control_service "start"; return 1; fi
 }
 
-_update_hy_script() { 
-    # ... (Function remains the same as previous version, calling _setup_hy_command with version check) ...
-    _log_info "尝试更新'${SCRIPT_COMMAND_NAME}'管理脚本本身..."; 
+_update_hy_script() {
+    _log_info "尝试更新'${SCRIPT_COMMAND_NAME}'管理脚本本身...";
     if _setup_hy_command; then # _setup_hy_command now returns 0 for success/no update, 1 for failure
         return 0
     else
@@ -411,8 +494,7 @@ _update_hy_script() {
     fi
 }
 _do_update() {
-    # ... (Function remains the same as previous version) ...
-     local hy_update_ok=false; local script_update_ok=false
+    local hy_update_ok=false; local script_update_ok=false
     _log_info "== 正在更新 Hysteria 程序 =="; if _update_hysteria_binary; then hy_update_ok=true; fi
     echo "---"; _log_info "== 正在更新 ${SCRIPT_COMMAND_NAME} 管理脚本 =="; if _update_hy_script; then script_update_ok=true; fi
     echo "---"; if $hy_update_ok && $script_update_ok ; then _log_success "更新过程完成。"; else _log_error "更新过程中遇到错误。请检查上面的日志。"; if ! $hy_update_ok; then _log_error " - Hysteria 程序更新失败或无需更新。"; fi; if ! $script_update_ok; then _log_error " - 管理脚本 ${SCRIPT_COMMAND_NAME} 更新失败或无需更新。"; fi; return 1; fi; return 0
@@ -423,11 +505,11 @@ _show_menu() {
     echo ""; _log_info "Hysteria 管理面板 (${SCRIPT_COMMAND_NAME} v$SCRIPT_VERSION - $SCRIPT_DATE)"
     echo "--------------------------------------------"; echo " 服务管理:";
     echo "   start         - 启动 Hysteria 服务"; echo "   stop          - 停止 Hysteria 服务"; echo "   restart       - 重启 Hysteria 服务"; echo "   status        - 查看 Hysteria 服务状态"; echo "   enable        - 设置 Hysteria 服务开机自启"; echo "   disable       - 禁止 Hysteria 服务开机自启"
-    echo " 配置与信息:"; echo "   config        - 显示当前配置摘要"; echo "   config_edit   - (高级) 手动编辑配置文件 (\$EDITOR)"; echo "   config_change - 交互式更改部分配置 (端口, 密码, 伪装URL)"; echo "   info          - 显示当前订阅链接和二维码" 
+    echo " 配置与信息:"; echo "   config        - 显示当前配置摘要"; echo "   config_edit   - (高级) 手动编辑配置文件 (\$EDITOR)"; echo "   config_change - 交互式更改部分配置 (端口, 密码, 伪装URL)"; echo "   info          - 显示当前订阅链接和二维码"
     echo " 日志查看:"; echo "   logs          - 查看 Hysteria 输出日志 ($LOG_FILE_OUT)"; echo "   logs_err      - 查看 Hysteria 错误日志 ($LOG_FILE_ERR)"
     _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then echo "   logs_sys      - 查看 systemd 服务日志 (journalctl)"; fi
     echo " 安装与更新:"; echo "   install       - 安装或重新安装 Hysteria (会提示覆盖)"; echo "   update        - 更新 Hysteria 程序 和 '${SCRIPT_COMMAND_NAME}' 脚本"
-    echo " 卸载:"; echo "   uninstall     - 卸载 Hysteria (自动尝试移除'${SCRIPT_COMMAND_NAME}'和'qrencode')" 
+    echo " 卸载:"; echo "   uninstall     - 卸载 Hysteria (自动尝试移除'${SCRIPT_COMMAND_NAME}'和'qrencode')"
     echo " 其他:"; echo "   version       - 显示此脚本和 Hysteria 版本"; echo "   help          - 显示此帮助菜单"
     echo "--------------------------------------------"; echo "用法: sudo ${SCRIPT_COMMAND_NAME} <命令>"; echo "例如: sudo ${SCRIPT_COMMAND_NAME} start"; echo "      sudo ${SCRIPT_COMMAND_NAME} update"; echo ""
     _log_info "此脚本在执行 'install' 时会尝试自动安装为 /usr/local/bin/${SCRIPT_COMMAND_NAME} 命令."
@@ -438,42 +520,56 @@ _show_menu() {
 
 _show_management_commands_hint() { _log_info "您可使用 'sudo ${SCRIPT_COMMAND_NAME} help' 或不带参数运行 'sudo ${SCRIPT_COMMAND_NAME}' 查看管理命令面板。"; }
 
+_show_info_and_qrcode() { # Added function to combine info and qrcode display
+    _detect_os
+    if ! _is_hysteria_installed; then
+        _log_error "Hysteria 未安装。无法显示信息和二维码。"
+        return 1
+    fi
+    if _get_link_params_from_config; then
+        _display_link_and_qrcode
+    else
+        _log_error "无法从配置文件解析参数以生成订阅链接和二维码。"
+        _log_warning "请确保 Hysteria 已正确配置，或尝试重新运行 '${SCRIPT_COMMAND_NAME} install'。"
+    fi
+}
+
 # --- Main Script Logic ---
 if [[ "$1" != "version" && "$1" != "help" && "$1" != "" && "$1" != "-h" && "$1" != "--help" ]]; then _detect_os; fi
 ACTION="$1"
 case "$ACTION" in
-    install)         _do_install ;;
-    uninstall)       _do_uninstall ;;
-    update)          _do_update ;;
-    start)           _control_service "start" ;;
-    stop)            _control_service "stop" ;;
-    restart)         _control_service "restart" ;;
-    status)          _control_service "status" ;;
-    enable)          _control_service "enable" ;;
-    disable)         _control_service "disable" ;;
+    install)          _do_install ;;
+    uninstall)        _do_uninstall ;;
+    update)           _do_update ;;
+    start)            _control_service "start" ;;
+    stop)             _control_service "stop" ;;
+    restart)          _control_service "restart" ;;
+    status)           _control_service "status" ;;
+    enable)           _control_service "enable" ;;
+    disable)          _control_service "disable" ;;
     config|show_config) _show_config ;;
-    config_edit)     _ensure_root; if ! _is_hysteria_installed; then _log_error "Hysteria未安装."; exit 1; fi; if [ -z "$EDITOR" ]; then EDITOR="vi"; fi; _log_info "使用 $EDITOR 打开 $HYSTERIA_CONFIG_FILE ..."; if $EDITOR "$HYSTERIA_CONFIG_FILE"; then _log_info "编辑完成。考虑重启服务: sudo $SCRIPT_COMMAND_NAME restart"; else _log_error "编辑器 '$EDITOR' 返回错误。"; fi ;;
-    config_change)   _change_config_interactive ;;
-    info)            _show_info_and_qrcode ;; 
-    # qrcode|qrc)      # Removed separate qrcode command - now part of info
-    logs)            if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [ ! -f "$LOG_FILE_OUT" ]; then _log_error "日志文件 $LOG_FILE_OUT 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 ($LOG_FILE_OUT)。"; tail -f "$LOG_FILE_OUT" ;;
-    logs_err)        if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [ ! -f "$LOG_FILE_ERR" ]; then _log_error "日志文件 $LOG_FILE_ERR 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 ($LOG_FILE_ERR)。"; tail -f "$LOG_FILE_ERR" ;;
-    logs_sys)        _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "按 CTRL+C 退出 (journalctl -f)。"; journalctl -u "$CURRENT_HYSTERIA_SERVICE_NAME" -f --no-pager; else _log_error "此命令仅适用于 systemd 系统。"; fi ;;
-    version)         
+    config_edit)      _ensure_root; if ! _is_hysteria_installed; then _log_error "Hysteria未安装."; exit 1; fi; if [ -z "$EDITOR" ]; then EDITOR="vi"; fi; _log_info "使用 $EDITOR 打开 $HYSTERIA_CONFIG_FILE ..."; if $EDITOR "$HYSTERIA_CONFIG_FILE"; then _log_info "编辑完成。考虑重启服务: sudo $SCRIPT_COMMAND_NAME restart"; else _log_error "编辑器 '$EDITOR' 返回错误。"; fi ;;
+    config_change)    _change_config_interactive ;;
+    info)             _show_info_and_qrcode ;;
+    # qrcode|qrc)     # Removed separate qrcode command - now part of info
+    logs)             if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [ ! -f "$LOG_FILE_OUT" ]; then _log_error "日志文件 $LOG_FILE_OUT 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 ($LOG_FILE_OUT)。"; tail -f "$LOG_FILE_OUT" ;;
+    logs_err)         if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [ ! -f "$LOG_FILE_ERR" ]; then _log_error "日志文件 $LOG_FILE_ERR 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 ($LOG_FILE_ERR)。"; tail -f "$LOG_FILE_ERR" ;;
+    logs_sys)         _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "按 CTRL+C 退出 (journalctl -f)。"; journalctl -u "$CURRENT_HYSTERIA_SERVICE_NAME" -f --no-pager; else _log_error "此命令仅适用于 systemd 系统。"; fi ;;
+    version)
         echo "$SCRIPT_COMMAND_NAME 管理脚本 v$SCRIPT_VERSION ($SCRIPT_DATE)"; echo "脚本文件: $SCRIPT_FILE_BASENAME"
-        if _is_hysteria_installed && command -v "$HYSTERIA_INSTALL_PATH" &>/dev/null; then 
-            HY_VERSION_OUTPUT=$("$HYSTERIA_INSTALL_PATH" version 2>/dev/null) 
-            HY_VERSION=$(echo "$HY_VERSION_OUTPUT" | grep '^Version:' | awk '{print $2}') 
+        if _is_hysteria_installed && command -v "$HYSTERIA_INSTALL_PATH" &>/dev/null; then
+            HY_VERSION_OUTPUT=$("$HYSTERIA_INSTALL_PATH" version 2>/dev/null)
+            HY_VERSION=$(echo "$HY_VERSION_OUTPUT" | grep '^Version:' | awk '{print $2}')
             if [ -n "$HY_VERSION" ]; then
                 echo "已安装 Hysteria 版本: $HY_VERSION"
-                echo "--- Hysteria 完整版本信息 ---" 
-                echo "$HY_VERSION_OUTPUT" 
+                echo "--- Hysteria 完整版本信息 ---"
+                echo "$HY_VERSION_OUTPUT"
                 echo "-----------------------------"
             else
-                 _log_warning "无法从 '$HYSTERIA_INSTALL_PATH version' 解析版本号。尝试显示原始输出:"
-                 "$HYSTERIA_INSTALL_PATH" version 
+                _log_warning "无法从 '$HYSTERIA_INSTALL_PATH version' 解析版本号。尝试显示原始输出:"
+                "$HYSTERIA_INSTALL_PATH" version
             fi
-        else 
+        else
             _log_warning "Hysteria 未安装或 $HYSTERIA_INSTALL_PATH 未找到。"
         fi ;;
     help|--help|-h|"") _show_menu ;;
