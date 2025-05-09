@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.0" # Incremented for qrencode integration and streamlined uninstall
+SCRIPT_VERSION="1.5.1" # Incremented for Alpine community repo fix
 SCRIPT_DATE="2025-05-09" 
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -48,8 +48,40 @@ _detect_os() {
 _is_hysteria_installed() { _detect_os; if [ -f "$HYSTERIA_INSTALL_PATH" ] && [ -f "$HYSTERIA_CONFIG_FILE" ]; then if [ "$INIT_SYSTEM" == "systemd" ] && [ -f "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME" ]; then return 0; elif [ "$INIT_SYSTEM" == "openrc" ] && [ -f "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME" ]; then return 0; fi; fi; return 1; }
 
 _install_dependencies() { 
-    _log_info "更新包列表(${DISTRO_FAMILY})..."; 
-    if ! $PKG_UPDATE_CMD >/dev/null; then _log_warning "更新列表失败."; fi
+    _log_info "更新包列表(${DISTRO_FAMILY})..."
+    
+    if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
+        # Ensure community repository is enabled for qrencode and other common packages
+        if ! grep -q -E "^[^#].*/community$" /etc/apk/repositories; then
+            _log_info "Alpine community repository 未启用，尝试启用..."
+            # Check if community repo line exists but is commented out
+            if grep -q -E "^#.*/community$" /etc/apk/repositories; then
+                # Uncomment the first occurrence of a commented community repo line
+                # This is a common pattern, e.g., http://dl-cdn.alpinelinux.org/alpine/vX.Y/community
+                if sed -i -e '0,/^#\(.*\/community\)/s//\1/' /etc/apk/repositories; then
+                    _log_success "已尝试取消注释 community repository。"
+                    # Update again after modifying repositories
+                    _log_info "修改仓库后再次更新包列表..."
+                    if ! $PKG_UPDATE_CMD >/dev/null; then
+                         _log_warning "修改仓库后更新包列表失败。"
+                    else
+                         _log_info "修改仓库后包列表已更新。"
+                    fi
+                else
+                    _log_error "使用 sed 取消注释 community repository 失败。"
+                fi
+            else
+                _log_warning "在 /etc/apk/repositories 中未找到 community repository 的注释行。可能需要手动添加。"
+                _log_warning "尝试继续，但 qrencode 等包可能无法安装。"
+            fi
+        else
+            _log_info "Alpine community repository 已启用。"
+        fi
+    fi # End Alpine specific repo check
+
+    if ! $PKG_UPDATE_CMD >/dev/null; then # General update
+        _log_warning "更新列表失败 (可能是网络问题，或已是最新)。"; 
+    fi
     
     # Add qrencode to common dependencies
     REQUIRED_PKGS_COMMON="wget curl git openssl lsof coreutils qrencode" 
@@ -75,8 +107,7 @@ _install_dependencies() {
             _log_info "正在安装 $pkg..."
             if ! $PKG_INSTALL_CMD "$pkg" > /dev/null; then 
                 _log_error "安装 $pkg 失败。请手动安装后重试。"
-                # If qrencode fails, maybe just warn instead of exiting? For now, exit.
-                exit 1
+                exit 1 # Exit on any package install failure
             fi
         fi
     done
@@ -128,7 +159,7 @@ _display_link_and_qrcode() {
     SUBSCRIPTION_LINK="hysteria2://${HY_PASSWORD}@${HY_LINK_ADDRESS}:${HY_PORT}/?sni=${HY_LINK_SNI}&alpn=h3&insecure=${HY_LINK_INSECURE}#Hysteria-${HY_SNI_VALUE}"
     echo ""; _log_info "Hysteria2 订阅链接 (根据当前配置生成):"
     echo -e "${GREEN}${SUBSCRIPTION_LINK}${NC}"
-    echo "" # Add a newline
+    echo "" 
     if command -v qrencode &>/dev/null; then
         _log_info "Hysteria2 订阅链接二维码:"
         qrencode -t ANSIUTF8 "$SUBSCRIPTION_LINK"
@@ -136,10 +167,11 @@ _display_link_and_qrcode() {
         _log_warning "提示: 'qrencode' 未安装, 无法显示二维码。"
         _log_info "(可运行 'sudo $PKG_INSTALL_CMD qrencode' 安装)"
     fi
-    echo "" # Add a newline after QR code or message
+    echo "" 
 }
 
 _do_install() {
+    # ... (Installation logic remains the same as previous version) ...
     _ensure_root; _detect_os
     if _is_hysteria_installed; then _read_confirm_tty confirm_install "Hysteria 已安装。是否强制安装(覆盖配置)? [y/N]: "; if [[ "$confirm_install" != "y" && "$confirm_install" != "Y" ]]; then _log_info "安装取消。"; exit 0; fi; _log_warning "正强制安装..."; fi
     _install_dependencies # Now installs qrencode by default
@@ -217,18 +249,21 @@ EOF
     sleep 2; if _control_service "status" > /dev/null; then _log_success "Hysteria服务已成功运行！"; else _log_error "Hysteria服务状态异常!"; fi
     _setup_hy_command
     
-    # --- Display final info and QR code ---
     _log_success "Hysteria 2安装配置完成！"
     echo "------------------------------------------------------------------------"
-    # Call the combined info/qrcode display function
-    _show_info_and_qrcode
+    # Display info and QR code after successful installation
+    if _get_link_params_from_config; then # Ensure params are fresh from config
+        _display_link_and_qrcode
+    else
+        _log_error "安装完成，但无法从配置文件生成最终的订阅链接和二维码信息。"
+        _log_warning "您可能需要手动检查 /etc/hysteria/config.yaml 并使用 '${SCRIPT_COMMAND_NAME} info' 重试。"
+    fi
     echo "------------------------------------------------------------------------"
     _show_management_commands_hint
 }
 
 _do_uninstall() {
     _ensure_root; _detect_os
-    # Streamlined: Only one confirmation needed
     _read_confirm_tty confirm_uninstall "这将卸载 Hysteria 2 并删除所有相关配置和文件。确定? [y/N]: "
     if [[ "$confirm_uninstall" != "y" && "$confirm_uninstall" != "Y" ]]; then _log_info "卸载取消。"; exit 0; fi
 
@@ -236,16 +271,14 @@ _do_uninstall() {
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "禁用systemd服务..."; $SERVICE_CMD disable "$CURRENT_HYSTERIA_SERVICE_NAME" >/dev/null 2>&1; _log_info "移除systemd服务文件..."; rm -f "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME"; find /etc/systemd/system/ -name "$CURRENT_HYSTERIA_SERVICE_NAME" -delete; $SERVICE_CMD daemon-reload; $SERVICE_CMD reset-failed "$CURRENT_HYSTERIA_SERVICE_NAME" >/dev/null 2>&1 || true
     elif [[ "$INIT_SYSTEM" == "openrc" ]]; then _log_info "移除OpenRC服务..."; rc-update del "$CURRENT_HYSTERIA_SERVICE_NAME" default >/dev/null 2>&1; _log_info "移除OpenRC脚本..."; rm -f "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME"; fi
     _log_info "移除Hysteria二进制: $HYSTERIA_INSTALL_PATH"; rm -f "$HYSTERIA_INSTALL_PATH"
-    _log_info "移除Hysteria配置: $HYSTERIA_CONFIG_DIR"; rm -rf "$HYSTERIA_CONFIG_DIR" # Removes config, certs, and install_vars if exists
+    _log_info "移除Hysteria配置: $HYSTERIA_CONFIG_DIR"; rm -rf "$HYSTERIA_CONFIG_DIR"
     _log_info "移除Hysteria日志: $LOG_FILE_OUT, $LOG_FILE_ERR"; rm -f "$LOG_FILE_OUT" "$LOG_FILE_ERR"
     
-    # Automatically attempt to remove qrencode if it exists
     if command -v qrencode &>/dev/null; then
         _log_info "尝试自动卸载 qrencode..."
         if $PKG_REMOVE_CMD qrencode >/dev/null; then _log_success "qrencode 已卸载。"; else _log_warning "卸载 qrencode 失败 (可能未安装或出错)。"; fi
     fi
 
-    # Automatically attempt to remove hy command if it exists
     if [ -f "/usr/local/bin/$SCRIPT_COMMAND_NAME" ]; then 
         _log_info "尝试自动移除管理命令 /usr/local/bin/$SCRIPT_COMMAND_NAME ..."
         if rm -f "/usr/local/bin/$SCRIPT_COMMAND_NAME"; then _log_success "/usr/local/bin/$SCRIPT_COMMAND_NAME 已移除。"; else _log_error "移除 /usr/local/bin/$SCRIPT_COMMAND_NAME 失败。"; fi
@@ -277,7 +310,7 @@ _show_config() {
     local password=$(grep 'password:' "$HYSTERIA_CONFIG_FILE" | head -n 1 | sed -e 's/^.*password:[[:space:]]*//' -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/["'\'']//g' || echo "未知")
     local masquerade_url=$(grep '^\s*masquerade:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*url: \([^, }]*\).*/\1/p' || echo "未知"); if [ -z "$masquerade_url" ]; then masquerade_url=$(awk '/^\s*masquerade:/,/url:/{if(/url:/) print $2}' "$HYSTERIA_CONFIG_FILE" || echo "未知"); fi
     echo "  监听端口: $port"; echo "  密码: $password"; echo "  伪装URL: $masquerade_url"
-    if grep -q '^\s*tls:' "$HYSTERIA_CONFIG_FILE"; then local cert_path=$(grep '^\s*tls:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*cert: \([^, }]*\).*/\1/p' || echo "未知"); local key_path=$(grep '^\s*tls:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*key: \([^ }]*\).*/\1/p' || echo "未知"); echo "  TLS模式: 自定义证书"; echo "    证书路径: $cert_path"; echo "    私钥路径: $key_path";
+    if grep -q '^\s*tls:' "$HYSTERIA_CONFIG_FILE"; then local cert_path=$(grep '^\s*cert:' "$HYSTERIA_CONFIG_FILE" | head -n 1 | sed -e 's/^\s*cert:[[:space:]]*//' -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/^["'\'']//' -e 's/["'\'']$//' || echo "未知"); local key_path=$(grep '^\s*key:' "$HYSTERIA_CONFIG_FILE" | head -n 1 | sed -e 's/^\s*key:[[:space:]]*//' -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/^["'\'']//' -e 's/["'\'']$//' || echo "未知"); echo "  TLS模式: 自定义证书"; echo "    证书路径: $cert_path"; echo "    私钥路径: $key_path";
     elif grep -q '^\s*acme:' "$HYSTERIA_CONFIG_FILE"; then local domain=$(grep -A 1 '^\s*domains:' "$HYSTERIA_CONFIG_FILE" | grep '^\s*-\s*' | sed -e 's/^\s*-\s*//' -e 's/#.*//' -e 's/[ \t]*$//' -e 's/^["'\'']//' -e 's/["'\'']$//'); local email=$(grep -A 2 '^\s*acme:' "$HYSTERIA_CONFIG_FILE" | grep 'email:' | sed -e 's/^\s*email:\s*//' -e 's/#.*//' -e 's/[[:space:]]*$//'); echo "  TLS模式: ACME"; echo "    域名: $domain"; echo "    邮箱: $email";
     else echo "  TLS模式: 未知"; fi; echo "----------------------------------------------------"
 }
@@ -298,18 +331,8 @@ _change_config_interactive() {
     rm -f "$temp_config_file"; if $config_changed; then _log_success "配置更新。重启服务..."; _control_service "restart"; rm -f "$CONFIG_BACKUP_FILE"; else _log_info "未配置更改。"; rm -f "$CONFIG_BACKUP_FILE"; fi
 }
 
-_show_info_and_qrcode() { # Renamed function
-    _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; return 1; fi
-    if ! _get_link_params_from_config; then _log_error "无法从当前配置生成信息。"; return 1; fi 
-    
-    # Call the helper function to display link and QR code
-    _display_link_and_qrcode 
-}
-
-# Removed _show_info_link and _show_qrcode as separate functions
-
 _update_hysteria_binary() {
-    # ... (Function remains the same as previous version) ...
+    # ... (Function remains the same as previous version with improved version parsing/comparison) ...
      _ensure_root; _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。无法更新。"; return 1; fi
     _log_info "检查 Hysteria 程序更新..."; VERSION_OUTPUT=$("$HYSTERIA_INSTALL_PATH" version 2>/dev/null); CURRENT_VER=$(echo "$VERSION_OUTPUT" | grep '^Version:' | awk '{print $2}'); if [ -z "$CURRENT_VER" ]; then _log_warning "无法获取当前版本。尝试下载最新。"; CURRENT_VER="unknown"; else _log_info "当前版本: $CURRENT_VER"; fi
     _log_info "获取最新版本号..."; LATEST_VER_TAG=$(curl -s --connect-timeout 5 "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'); if [ -z "$LATEST_VER_TAG" ]; then _log_warning "无法从 GitHub API 获取版本号。尝试下载'latest'。"; LATEST_VER_CLEAN="latest"; else LATEST_VER_CLEAN=$(echo "$LATEST_VER_TAG" | sed 's#^app/##'); _log_info "最新版本 Tag: $LATEST_VER_TAG (比较版本: $LATEST_VER_CLEAN)"; if [[ "$CURRENT_VER" == "$LATEST_VER_CLEAN" && "$CURRENT_VER" != "unknown" ]]; then _log_success "当前已是最新版本 ($CURRENT_VER)。"; return 0; fi; fi
@@ -319,7 +342,7 @@ _update_hysteria_binary() {
 }
 
 _update_hy_script() { 
-    # ... (Function remains the same as previous version) ...
+    # ... (Function remains the same as previous version, calling _setup_hy_command) ...
     _log_info "尝试更新'${SCRIPT_COMMAND_NAME}'管理脚本本身..."; _setup_hy_command; return $?; 
 }
 _do_update() {
@@ -367,10 +390,10 @@ case "$ACTION" in
     config_edit)     _ensure_root; if ! _is_hysteria_installed; then _log_error "Hysteria未安装."; exit 1; fi; if [ -z "$EDITOR" ]; then EDITOR="vi"; fi; _log_info "使用 $EDITOR 打开 $HYSTERIA_CONFIG_FILE ..."; if $EDITOR "$HYSTERIA_CONFIG_FILE"; then _log_info "编辑完成。考虑重启服务: sudo $SCRIPT_COMMAND_NAME restart"; else _log_error "编辑器 '$EDITOR' 返回错误。"; fi ;;
     config_change)   _change_config_interactive ;;
     info)            _show_info_and_qrcode ;; # Changed to call combined function
-    # qrcode|qrc)      _show_qrcode ;; # Removed separate qrcode command
+    # qrcode|qrc)      # Removed separate qrcode command - now part of info
     logs)            if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [ ! -f "$LOG_FILE_OUT" ]; then _log_error "日志文件 $LOG_FILE_OUT 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 ($LOG_FILE_OUT)。"; tail -f "$LOG_FILE_OUT" ;;
     logs_err)        if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [ ! -f "$LOG_FILE_ERR" ]; then _log_error "日志文件 $LOG_FILE_ERR 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 ($LOG_FILE_ERR)。"; tail -f "$LOG_FILE_ERR" ;;
-    logs_sys)        _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "按 CTRL+C 退出 (journalctl -f)。"; journalctl -u "$CURRENT_HYSTERIA_SERVICE_NAME" -f --no-pager; else _log_error "此命令仅适用于 systemd 系统。"; fi ;; # Fixed exit hint
+    logs_sys)        _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "按 CTRL+C 退出 (journalctl -f)。"; journalctl -u "$CURRENT_HYSTERIA_SERVICE_NAME" -f --no-pager; else _log_error "此命令仅适用于 systemd 系统。"; fi ;;
     version)         
         echo "$SCRIPT_COMMAND_NAME 管理脚本 v$SCRIPT_VERSION ($SCRIPT_DATE)"; echo "脚本文件: $SCRIPT_FILE_BASENAME"
         if _is_hysteria_installed && command -v "$HYSTERIA_INSTALL_PATH" &>/dev/null; then 
@@ -378,7 +401,7 @@ case "$ACTION" in
             if [ -n "$HY_VERSION" ]; then
                 echo "已安装 Hysteria 版本: $HY_VERSION"
                 echo "--- Hysteria 完整版本信息 ---" 
-                "$HYSTERIA_INSTALL_PATH" version # Run again to print full output including banner
+                "$HYSTERIA_INSTALL_PATH" version 
                 echo "-----------------------------"
             else
                  _log_warning "无法从 '$HYSTERIA_INSTALL_PATH version' 解析版本号。尝试显示原始输出:"
@@ -391,3 +414,4 @@ case "$ACTION" in
     *) _log_error "未知命令: $ACTION"; _show_menu; exit 1 ;;
 esac
 exit 0
+```
