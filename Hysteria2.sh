@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.3" # Incremented for more Alpine repo debugging
+SCRIPT_VERSION="1.5.4" # Incremented for Alpine qrencode package name fix
 SCRIPT_DATE="2025-05-09" 
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -12,7 +12,6 @@ HYSTERIA_INSTALL_PATH="/usr/local/bin/hysteria"
 HYSTERIA_CONFIG_DIR="/etc/hysteria"
 HYSTERIA_CONFIG_FILE="${HYSTERIA_CONFIG_DIR}/config.yaml"
 HYSTERIA_CERTS_DIR="${HYSTERIA_CONFIG_DIR}/certs"
-# HYSTERIA_INSTALL_VARS_FILE is no longer actively used, only removed on uninstall if exists
 HYSTERIA_INSTALL_VARS_FILE="${HYSTERIA_CONFIG_DIR}/install_vars.conf" 
 HYSTERIA_SERVICE_NAME_SYSTEMD="hysteria.service"
 HYSTERIA_SERVICE_NAME_OPENRC="hysteria"
@@ -59,7 +58,7 @@ _install_dependencies() {
         if ! grep -q -E "$community_repo_active_pattern" "$repo_file"; then
             _log_info "Alpine community repository 未启用或被注释，尝试处理..."
             if [ ! -w "$repo_file" ]; then
-                _log_error "无法写入 Alpine 仓库文件 $repo_file。请确保脚本以 root 权限运行，并且文件可写。"
+                _log_error "无法写入 Alpine 仓库文件 $repo_file。"
             else
                 _log_info "修改前 /etc/apk/repositories 内容:"
                 cat "$repo_file"
@@ -118,7 +117,7 @@ _install_dependencies() {
         if ! apk update; then 
              _log_warning "Alpine apk update 失败。"; 
         fi
-        _log_info "尝试搜索 qrencode 包 (apk search -v qrencode)..." 
+        _log_info "尝试搜索 qrencode 相关包 (apk search -v qrencode)..." 
         apk search -v qrencode 
 
     elif [[ "$DISTRO_FAMILY" == "debian" ]]; then 
@@ -139,20 +138,43 @@ _install_dependencies() {
     
     for pkg in $REQUIRED_PKGS; do 
         installed=false
-        if [[ "$DISTRO_FAMILY" == "alpine" ]]; then if apk info -e "$pkg" &>/dev/null; then installed=true; fi
-        elif [[ "$DISTRO_FAMILY" == "debian" ]]; then if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then installed=true; fi; fi
+        local pkg_to_install="$pkg" # Use a temporary variable for package name
+
+        if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
+            if [[ "$pkg" == "qrencode" ]]; then
+                _log_info "Alpine: 将 qrencode 映射到 libqrencode-tools 进行安装..."
+                pkg_to_install="libqrencode-tools"
+            fi
+            if apk info -e "$pkg_to_install" &>/dev/null; then # Check actual package name
+                # If original was qrencode but libqrencode-tools is installed, consider qrencode "covered"
+                if [[ "$pkg" == "qrencode" && "$pkg_to_install" == "libqrencode-tools" ]]; then
+                    _log_info "libqrencode-tools (提供 qrencode) 已安装。"
+                else
+                    _log_info "$pkg_to_install 已安装。"
+                fi
+                installed=true
+            fi
+        elif [[ "$DISTRO_FAMILY" == "debian" ]]; then 
+            if dpkg-query -W -f='${Status}' "$pkg_to_install" 2>/dev/null | grep -q "install ok installed"; then 
+                installed=true
+            fi
+        fi
         
         if $installed; then 
-            _log_info "$pkg 已安装。"
+            if [[ "$pkg" != "$pkg_to_install" ]]; then # Log original request if mapped
+                 _log_info "$pkg (通过 $pkg_to_install) 已安装。"
+            else
+                 _log_info "$pkg 已安装。"
+            fi
         else 
-            _log_info "正在安装 $pkg..."
+            _log_info "正在安装 $pkg_to_install (作为 $pkg)..."
             if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
-                if ! apk add --no-cache "$pkg"; then 
-                    _log_error "安装 $pkg 在 Alpine 上失败。请检查上面的 apk 输出。"
+                if ! apk add --no-cache "$pkg_to_install"; then 
+                    _log_error "安装 $pkg_to_install 在 Alpine 上失败。请检查上面的 apk 输出。"
                     exit 1
                 fi
-            elif ! $PKG_INSTALL_CMD "$pkg" > /dev/null; then 
-                _log_error "安装 $pkg 失败。请手动安装后重试。"
+            elif ! $PKG_INSTALL_CMD "$pkg_to_install" > /dev/null; then 
+                _log_error "安装 $pkg_to_install 失败。请手动安装后重试。"
                 exit 1
             fi
         fi
