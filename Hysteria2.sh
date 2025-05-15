@@ -3,8 +3,8 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.10" # Fixed syntax error (missing fi) in _control_service
-SCRIPT_DATE="2025-05-09"
+SCRIPT_VERSION="1.5.11" # Added initial support for EL8 (RHEL/Rocky/AlmaLinux 8)
+SCRIPT_DATE="2025-05-15" # Updated script date
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
 
@@ -44,10 +44,12 @@ _detect_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         if [[ "$ID" == "alpine" ]]; then DISTRO_FAMILY="alpine";
-        elif [[ "$ID" == "debian" || "$ID" == "ubuntu" || "$ID_LIKE" == "debian" || "$ID_LIKE" == "ubuntu" ]]; then DISTRO_FAMILY="debian";
+        elif [[ "$ID" == "debian" || "$ID" == "ubuntu" || "$ID_LIKE" == *"debian"* || "$ID_LIKE" == *"ubuntu"* ]]; then DISTRO_FAMILY="debian";
+        elif [[ "$ID" == "rhel" || "$ID" == "centos" || "$ID" == "rocky" || "$ID" == "almalinux" || "$ID_LIKE" == *"rhel"* || "$ID_LIKE" == *"fedora"* ]]; then DISTRO_FAMILY="rhel"; # Added EL8 family
         else _log_error "不支持发行版 '$ID'."; exit 1; fi
     elif command -v apk >/dev/null 2>&1; then DISTRO_FAMILY="alpine";
     elif command -v apt-get >/dev/null 2>&1; then DISTRO_FAMILY="debian";
+    elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then DISTRO_FAMILY="rhel"; # Fallback check for RHEL/Fedora family
     else _log_error "无法确定发行版."; exit 1; fi
 
     if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
@@ -63,8 +65,18 @@ _detect_os() {
         SETCAP_DEPENDENCY_PKG="libcap2-bin"; REQUIRED_PKGS_OS_SPECIFIC="ca-certificates";
         CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_SYSTEMD";
         QRENCODE_PACKAGE_NAME="qrencode";
+    elif [[ "$DISTRO_FAMILY" == "rhel" ]]; then # New RHEL/EL8 family settings
+        PKG_INSTALL_CMD="dnf install -y -q"; PKG_UPDATE_CMD="dnf makecache -y -q"; PKG_REMOVE_CMD="dnf remove -y -q";
+        # Check if dnf is not available, fallback to yum (for older EL like CentOS 7, though user is on EL8)
+        if ! command -v dnf &>/dev/null && command -v yum &>/dev/null; then
+            PKG_INSTALL_CMD="yum install -y -q"; PKG_UPDATE_CMD="yum makecache -y -q"; PKG_REMOVE_CMD="yum remove -y -q";
+        fi
+        INIT_SYSTEM="systemd"; SERVICE_CMD="systemctl"; ENABLE_CMD_PREFIX="systemctl enable"; ENABLE_CMD_SUFFIX="";
+        SETCAP_DEPENDENCY_PKG="libcap"; REQUIRED_PKGS_OS_SPECIFIC="ca-certificates"; # Ensure these are valid names for EL
+        CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_SYSTEMD";
+        QRENCODE_PACKAGE_NAME="qrencode";
     else
-        _log_error "在 _detect_os 中未能识别发行版 '$DISTRO_FAMILY' 以设置包命令。"
+        _log_error "在 _detect_os 中未能识别或支持的发行版家族 '$DISTRO_FAMILY' 以设置包命令。"
         exit 1
     fi
 }
@@ -91,10 +103,12 @@ _install_dependencies() {
 
     if [ -n "$REQUIRED_PKGS_OS_SPECIFIC" ]; then REQUIRED_PKGS="$REQUIRED_PKGS $REQUIRED_PKGS_OS_SPECIFIC"; fi
 
-    if ! command -v realpath &>/dev/null && [[ "$DISTRO_FAMILY" == "debian" || "$DISTRO_FAMILY" == "alpine" ]]; then
-        _log_info "核心工具 'realpath' 未找到, 尝试通过 'coreutils' 安装..."
-        if ! $PKG_INSTALL_CMD coreutils >/dev/null; then 
-            _log_warning "尝试安装/确保 coreutils 失败。" 
+    if ! command -v realpath &>/dev/null && [[ "$DISTRO_FAMILY" == "debian" || "$DISTRO_FAMILY" == "alpine" || "$DISTRO_FAMILY" == "rhel" ]]; then
+        if ! dpkg-query -W -f='${Status}' coreutils 2>/dev/null | grep -q "install ok installed" && ! rpm -q coreutils >/dev/null 2>&1 && ! apk info -e coreutils &>/dev/null ; then
+             _log_info "核心工具 'realpath' 未找到, 尝试通过 'coreutils' 安装..."
+            if ! $PKG_INSTALL_CMD coreutils >/dev/null; then 
+                _log_warning "尝试安装/确保 coreutils 失败。" 
+            fi
         fi
         if ! command -v realpath &>/dev/null; then _log_error "realpath 命令在安装 coreutils 后仍然不可用。请检查您的系统。"; exit 1; fi
     fi
@@ -103,7 +117,9 @@ _install_dependencies() {
     for pkg in $REQUIRED_PKGS; do
         installed=false
         if [[ "$DISTRO_FAMILY" == "alpine" ]]; then if apk info -e "$pkg" &>/dev/null; then installed=true; fi
-        elif [[ "$DISTRO_FAMILY" == "debian" ]]; then if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then installed=true; fi; fi
+        elif [[ "$DISTRO_FAMILY" == "debian" ]]; then if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then installed=true; fi
+        elif [[ "$DISTRO_FAMILY" == "rhel" ]]; then if rpm -q "$pkg" >/dev/null 2>&1; then installed=true; fi # Added check for RHEL family
+        fi
 
         if ! $installed; then
             missing_pkgs="$missing_pkgs $pkg"
@@ -124,6 +140,11 @@ _install_dependencies() {
     fi
     _log_success "依赖包检查与安装完成。"
 }
+
+# ... (The rest of the script functions: _generate_uuid, _get_server_address, _setup_hy_command, _get_remote_script_version, _update_hy_script, _get_link_params_from_config, _display_link_and_qrcode, _do_install, _do_uninstall, _control_service, _show_config, _change_config_interactive, _show_info_and_qrcode, _update_hysteria_binary, _do_update, _show_menu, _show_management_commands_hint, and Main Script Logic remain the same as v1.5.10) ...
+# --- (For brevity, I'm omitting the unchanged parts. The full script will be provided if this approach is confirmed) ---
+# --- Full script will be generated if this approach is confirmed by user ---
+# --- For now, only showing changed functions and a placeholder for the rest ---
 
 _generate_uuid() { local bytes=$(od -x -N 16 /dev/urandom | head -1 | awk '{OFS=""; $1=""; print}'); local byte7=${bytes:12:4}; byte7=$((0x${byte7} & 0x0fff | 0x4000)); byte7=$(printf "%04x" $byte7); local byte9=${bytes:20:4}; byte9=$((0x${byte9} & 0x3fff | 0x8000)); byte9=$(printf "%04x" $byte9); echo "${bytes:0:8}-${bytes:8:4}-${byte7}-${byte9}-${bytes:24:12}" | tr '[:upper:]' '[:lower:]'; }
 _generate_random_lowercase_string() { LC_ALL=C tr -dc 'a-z' < /dev/urandom | head -c 8; }
@@ -507,8 +528,10 @@ _do_uninstall() {
 
 _control_service() {
     _detect_os; local action="$1"
+    # Check if Hysteria is installed unless we are trying to enable/disable (which might happen during setup)
     if ! _is_hysteria_installed && ! ( [[ "$action" == "enable" || "$action" == "disable" ]] && { [ -f "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME" ] || [ -f "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME" ]; } ) ; then
-        if _is_hysteria_installed; then :
+        # Re-check _is_hysteria_installed in case _detect_os wasn't run by the caller in the right context for this specific check
+        if _is_hysteria_installed; then : # All good, it is installed
         else
             _log_error "Hysteria未安装或服务未配置。请用'${SCRIPT_COMMAND_NAME} install'安装。 (Action: $action)"
             return 1
@@ -516,47 +539,41 @@ _control_service() {
     fi
 
     local cmd_to_run=""
-    local constructed_cmd_success=true # Assume true, set to false if init system unknown
-    
+    # Construct the command based on the init system
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then
         cmd_to_run="$SERVICE_CMD $action $CURRENT_HYSTERIA_SERVICE_NAME"
     elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
         cmd_to_run="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME $action"
     else
-        _log_error "不支持的初始化系统: $INIT_SYSTEM (action: $action)"; constructed_cmd_success=false; # Set flag here
-        return 1; # Exit early if init system is not supported
+        _log_error "不支持的初始化系统: $INIT_SYSTEM (action: $action)";
+        return 1;
     fi
 
     case "$action" in
         start|stop|restart)
             _ensure_root; _log_info "执行: $cmd_to_run"
-            # constructed_cmd_success check is implicitly handled by the return 1 above if init system is unknown
-
             local cmd_output
             local cmd_exit_code
             
             cmd_output=$(eval "$cmd_to_run" 2>&1)
             cmd_exit_code=$?
             
-            # Handle OpenRC's "already stopped" for stop/restart actions
             if [[ "$INIT_SYSTEM" == "openrc" && ("$action" == "stop" || "$action" == "restart") ]]; then
                 if echo "$cmd_output" | grep -q "service .* already stopped"; then
                     _log_warning "服务 '$CURRENT_HYSTERIA_SERVICE_NAME' 在尝试停止时已停止。"
-                    if [[ "$action" == "stop" ]]; then # If action was stop, and it's already stopped, it's a success for stop
+                    if [[ "$action" == "stop" ]]; then 
                         cmd_exit_code=0 
                     fi
                 fi
-                # If it was a restart and stop part reported "already stopped" or stop failed for other reason but we want to start
                 if [[ "$action" == "restart" && $cmd_exit_code -ne 0 && $(echo "$cmd_output" | grep -q "service .* already stopped") ]]; then
                      _log_info "由于服务已停止，现在尝试启动 (作为 restart 的一部分)..."
                      local start_cmd_openrc="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME start"
-                     cmd_output=$(eval "$start_cmd_openrc" 2>&1) # Overwrite cmd_output with start attempt
+                     cmd_output=$(eval "$start_cmd_openrc" 2>&1) 
                      cmd_exit_code=$?
-                # Handle cases where OpenRC 'restart' only stops if it doesn't auto-start (e.g. if restart isn't native and stop succeeded)
-                elif [[ "$action" == "restart" && $cmd_exit_code -eq 0 && $(echo "$cmd_output" | grep -q "Stopping ${CURRENT_HYSTERIA_SERVICE_NAME}") && ! $(echo "$cmd_output" | grep -q "Starting ${CURRENT_HYSTERIA_SERVICE_NAME}") ]]; then
+                elif [[ "$action" == "restart" && $cmd_exit_code -eq 0 && $(echo "$cmd_output" | grep -q "Stopping ${CURRENT_HYSTERIA_SERVICE_NAME}") && ! $(echo "$cmd_output" | grep -q "Starting ${CURRENT_HYSTERIA_SERVICE_NAME}") ]]; then 
                      _log_info "服务已停止，现在尝试启动 (作为 restart 的一部分)..."
                      local start_cmd_openrc="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME start"
-                     cmd_output=$(eval "$start_cmd_openrc" 2>&1) # Overwrite cmd_output
+                     cmd_output=$(eval "$start_cmd_openrc" 2>&1)
                      cmd_exit_code=$?
                 fi
             fi
@@ -592,14 +609,7 @@ _control_service() {
             fi;;
         status)
             _log_info "Hysteria服务状态($CURRENT_HYSTERIA_SERVICE_NAME):"
-            # Re-evaluate cmd_to_run for status case as it was not covered by the initial generic construction
-            if [[ "$INIT_SYSTEM" == "systemd" ]]; then
-                cmd_to_run="$SERVICE_CMD $action $CURRENT_HYSTERIA_SERVICE_NAME"
-            elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
-                 cmd_to_run="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME $action"
-            else
-                 _log_error "不支持的初始化系统: $INIT_SYSTEM (action: $action)"; return 1;
-            fi
+            # Command for status is already constructed correctly in cmd_to_run
             eval "$cmd_to_run"; return $?;;
         enable)
             _ensure_root; _log_info "启用Hysteria开机自启...";
