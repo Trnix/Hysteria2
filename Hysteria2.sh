@@ -3,8 +3,8 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.5.11" # Added initial support for EL8 (RHEL/Rocky/AlmaLinux 8)
-SCRIPT_DATE="2025-05-15" # Updated script date
+SCRIPT_VERSION="1.5.12" # Auto-generate remark based on IP geolocation
+SCRIPT_DATE="2025-05-15"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
 
@@ -45,11 +45,11 @@ _detect_os() {
         . /etc/os-release
         if [[ "$ID" == "alpine" ]]; then DISTRO_FAMILY="alpine";
         elif [[ "$ID" == "debian" || "$ID" == "ubuntu" || "$ID_LIKE" == *"debian"* || "$ID_LIKE" == *"ubuntu"* ]]; then DISTRO_FAMILY="debian";
-        elif [[ "$ID" == "rhel" || "$ID" == "centos" || "$ID" == "rocky" || "$ID" == "almalinux" || "$ID_LIKE" == *"rhel"* || "$ID_LIKE" == *"fedora"* ]]; then DISTRO_FAMILY="rhel"; # Added EL8 family
+        elif [[ "$ID" == "rhel" || "$ID" == "centos" || "$ID" == "rocky" || "$ID" == "almalinux" || "$ID_LIKE" == *"rhel"* || "$ID_LIKE" == *"fedora"* ]]; then DISTRO_FAMILY="rhel";
         else _log_error "不支持发行版 '$ID'."; exit 1; fi
     elif command -v apk >/dev/null 2>&1; then DISTRO_FAMILY="alpine";
     elif command -v apt-get >/dev/null 2>&1; then DISTRO_FAMILY="debian";
-    elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then DISTRO_FAMILY="rhel"; # Fallback check for RHEL/Fedora family
+    elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then DISTRO_FAMILY="rhel";
     else _log_error "无法确定发行版."; exit 1; fi
 
     if [[ "$DISTRO_FAMILY" == "alpine" ]]; then
@@ -65,14 +65,13 @@ _detect_os() {
         SETCAP_DEPENDENCY_PKG="libcap2-bin"; REQUIRED_PKGS_OS_SPECIFIC="ca-certificates";
         CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_SYSTEMD";
         QRENCODE_PACKAGE_NAME="qrencode";
-    elif [[ "$DISTRO_FAMILY" == "rhel" ]]; then # New RHEL/EL8 family settings
+    elif [[ "$DISTRO_FAMILY" == "rhel" ]]; then
         PKG_INSTALL_CMD="dnf install -y -q"; PKG_UPDATE_CMD="dnf makecache -y -q"; PKG_REMOVE_CMD="dnf remove -y -q";
-        # Check if dnf is not available, fallback to yum (for older EL like CentOS 7, though user is on EL8)
         if ! command -v dnf &>/dev/null && command -v yum &>/dev/null; then
             PKG_INSTALL_CMD="yum install -y -q"; PKG_UPDATE_CMD="yum makecache -y -q"; PKG_REMOVE_CMD="yum remove -y -q";
         fi
         INIT_SYSTEM="systemd"; SERVICE_CMD="systemctl"; ENABLE_CMD_PREFIX="systemctl enable"; ENABLE_CMD_SUFFIX="";
-        SETCAP_DEPENDENCY_PKG="libcap"; REQUIRED_PKGS_OS_SPECIFIC="ca-certificates"; # Ensure these are valid names for EL
+        SETCAP_DEPENDENCY_PKG="libcap"; REQUIRED_PKGS_OS_SPECIFIC="ca-certificates"; 
         CURRENT_HYSTERIA_SERVICE_NAME="$HYSTERIA_SERVICE_NAME_SYSTEMD";
         QRENCODE_PACKAGE_NAME="qrencode";
     else
@@ -103,9 +102,19 @@ _install_dependencies() {
 
     if [ -n "$REQUIRED_PKGS_OS_SPECIFIC" ]; then REQUIRED_PKGS="$REQUIRED_PKGS $REQUIRED_PKGS_OS_SPECIFIC"; fi
 
-    if ! command -v realpath &>/dev/null && [[ "$DISTRO_FAMILY" == "debian" || "$DISTRO_FAMILY" == "alpine" || "$DISTRO_FAMILY" == "rhel" ]]; then
-        if ! dpkg-query -W -f='${Status}' coreutils 2>/dev/null | grep -q "install ok installed" && ! rpm -q coreutils >/dev/null 2>&1 && ! apk info -e coreutils &>/dev/null ; then
-             _log_info "核心工具 'realpath' 未找到, 尝试通过 'coreutils' 安装..."
+    # Check for realpath and install coreutils if missing (simplified check)
+    if ! command -v realpath &>/dev/null ; then
+        local coreutils_installed=false
+        if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+            if dpkg-query -W -f='${Status}' coreutils 2>/dev/null | grep -q "install ok installed"; then coreutils_installed=true; fi
+        elif [[ "$DISTRO_FAMILY" == "alpine" ]]; then
+            if apk info -e coreutils &>/dev/null; then coreutils_installed=true; fi
+        elif [[ "$DISTRO_FAMILY" == "rhel" ]]; then
+            if rpm -q coreutils &>/dev/null; then coreutils_installed=true; fi
+        fi
+
+        if ! $coreutils_installed || ! command -v realpath &>/dev/null ; then # If coreutils not installed OR realpath still not found
+            _log_info "核心工具 'realpath' (通常由coreutils提供) 未找到或coreutils未安装, 尝试安装 'coreutils'..."
             if ! $PKG_INSTALL_CMD coreutils >/dev/null; then 
                 _log_warning "尝试安装/确保 coreutils 失败。" 
             fi
@@ -113,12 +122,13 @@ _install_dependencies() {
         if ! command -v realpath &>/dev/null; then _log_error "realpath 命令在安装 coreutils 后仍然不可用。请检查您的系统。"; exit 1; fi
     fi
 
+
     local missing_pkgs=""
     for pkg in $REQUIRED_PKGS; do
         installed=false
         if [[ "$DISTRO_FAMILY" == "alpine" ]]; then if apk info -e "$pkg" &>/dev/null; then installed=true; fi
         elif [[ "$DISTRO_FAMILY" == "debian" ]]; then if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then installed=true; fi
-        elif [[ "$DISTRO_FAMILY" == "rhel" ]]; then if rpm -q "$pkg" >/dev/null 2>&1; then installed=true; fi # Added check for RHEL family
+        elif [[ "$DISTRO_FAMILY" == "rhel" ]]; then if rpm -q "$pkg" >/dev/null 2>&1; then installed=true; fi
         fi
 
         if ! $installed; then
@@ -128,23 +138,34 @@ _install_dependencies() {
 
     if [ -n "$missing_pkgs" ]; then
         _log_info "下列依赖包需要安装:$missing_pkgs"
-        for pkg in $missing_pkgs; do
-            _log_info "正在安装 $pkg..."
-            if ! $PKG_INSTALL_CMD "$pkg" >/dev/null; then 
-                _log_error "安装 $pkg 失败。请检查上面可能显示的错误信息，或手动运行安装命令查看。"
-                exit 1
+        # Attempt to install all missing packages at once for dnf/yum for better dependency resolution
+        if [[ "$DISTRO_FAMILY" == "rhel" ]]; then
+            _log_info "正在尝试一次性安装所有 RHEL 缺失依赖..."
+            if ! $PKG_INSTALL_CMD $missing_pkgs >/dev/null; then
+                 _log_error "一次性安装 RHEL 依赖失败。将尝试逐个安装..."
+                 # Fallback to individual install if batch install fails
+                 for pkg in $missing_pkgs; do
+                    _log_info "正在安装 $pkg..."
+                    if ! $PKG_INSTALL_CMD "$pkg" >/dev/null; then 
+                        _log_error "安装 $pkg 失败。请检查上面可能显示的错误信息，或手动运行安装命令查看。"
+                        exit 1
+                    fi
+                done
             fi
-        done
+        else # For debian and alpine, install one by one (current behavior)
+            for pkg in $missing_pkgs; do
+                _log_info "正在安装 $pkg..."
+                if ! $PKG_INSTALL_CMD "$pkg" >/dev/null; then 
+                    _log_error "安装 $pkg 失败。请检查上面可能显示的错误信息，或手动运行安装命令查看。"
+                    exit 1
+                fi
+            done
+        fi
     else
         _log_info "所有基础依赖已满足。"
     fi
     _log_success "依赖包检查与安装完成。"
 }
-
-# ... (The rest of the script functions: _generate_uuid, _get_server_address, _setup_hy_command, _get_remote_script_version, _update_hy_script, _get_link_params_from_config, _display_link_and_qrcode, _do_install, _do_uninstall, _control_service, _show_config, _change_config_interactive, _show_info_and_qrcode, _update_hysteria_binary, _do_update, _show_menu, _show_management_commands_hint, and Main Script Logic remain the same as v1.5.10) ...
-# --- (For brevity, I'm omitting the unchanged parts. The full script will be provided if this approach is confirmed) ---
-# --- Full script will be generated if this approach is confirmed by user ---
-# --- For now, only showing changed functions and a placeholder for the rest ---
 
 _generate_uuid() { local bytes=$(od -x -N 16 /dev/urandom | head -1 | awk '{OFS=""; $1=""; print}'); local byte7=${bytes:12:4}; byte7=$((0x${byte7} & 0x0fff | 0x4000)); byte7=$(printf "%04x" $byte7); local byte9=${bytes:20:4}; byte9=$((0x${byte9} & 0x3fff | 0x8000)); byte9=$(printf "%04x" $byte9); echo "${bytes:0:8}-${bytes:8:4}-${byte7}-${byte9}-${bytes:24:12}" | tr '[:upper:]' '[:lower:]'; }
 _generate_random_lowercase_string() { LC_ALL=C tr -dc 'a-z' < /dev/urandom | head -c 8; }
@@ -254,8 +275,64 @@ _update_hy_script() {
     fi
 }
 
+_get_ip_geolocation_remark() {
+    local geo_info country_code country_name_en country_cn remark
+    _log_info "正在获取服务器地理位置信息以生成备注..."
+
+    geo_info=$(curl -s --connect-timeout 8 http://ip-api.com/json/)
+
+    if [ -z "$geo_info" ]; then
+        _log_warning "无法获取地理位置信息 (curl失败或超时)。将使用默认备注。"
+        echo "" 
+        return
+    fi
+
+    if ! echo "$geo_info" | grep -q '"status":"success"'; then
+        local error_message=$(echo "$geo_info" | grep -o '"message":"[^"]*"' | awk -F'"' '{print $4}')
+        _log_warning "地理位置API返回错误: ${error_message:-未知API错误}。将使用默认备注。"
+        echo ""
+        return
+    fi
+    
+    country_code=$(echo "$geo_info" | grep -o '"countryCode":"[^"]*"' | awk -F'"' '{print $4}')
+    country_name_en=$(echo "$geo_info" | grep -o '"country":"[^"]*"' | awk -F'"' '{print $4}')
+
+    if [ -z "$country_code" ]; then
+        _log_warning "无法从API响应解析国家代码。将使用默认备注。"
+        echo ""
+        return
+    fi
+
+    case "$country_code" in
+        "US") country_cn="美国";; "DE") country_cn="德国";; "JP") country_cn="日本";;
+        "SG") country_cn="新加坡";; "HK") country_cn="香港";; "MO") country_cn="澳门";;
+        "TW") country_cn="台湾";; "CN") country_cn="中国大陆";; "GB") country_cn="英国";;
+        "NL") country_cn="荷兰";; "FR") country_cn="法国";; "CA") country_cn="加拿大";;
+        "AU") country_cn="澳大利亚";; "KR") country_cn="韩国";; "RU") country_cn="俄罗斯";;
+        "MY") country_cn="马来西亚";; "TH") country_cn="泰国";; "VN") country_cn="越南";;
+        "ID") country_cn="印尼";; "PH") country_cn="菲律宾";; "IN") country_cn="印度";;
+        "TR") country_cn="土耳其";; "AE") country_cn="阿联酋";;
+        *) 
+            if [ -n "$country_name_en" ]; then country_cn="$country_name_en"; 
+            else country_cn="未知地区"; fi ;;
+    esac
+    
+    if [[ "$country_cn" == "未知地区" && -n "$country_code" ]]; then # Has code but not mapped name
+        remark="地区${country_code}-Hysteria"
+    elif [[ "$country_cn" == "未知地区" ]]; then # No code, no mapped name, effectively
+        _log_warning "无法确定有效的国家名称或代码。将使用默认备注。"
+        echo ""
+        return
+    else # Normal case with Chinese name or fallback English name
+        remark="${country_cn}Hysteria-${country_code}"
+    fi
+    
+    _log_info "根据地理位置生成备注: ${remark}"
+    echo "$remark"
+}
 
 _get_link_params_from_config() {
+    # ... (This function remains the same as v1.5.11) ...
     unset HY_PASSWORD HY_LINK_ADDRESS HY_PORT HY_LINK_SNI HY_LINK_INSECURE HY_SNI_VALUE DOMAIN_FROM_CONFIG CERT_PATH_FROM_CONFIG KEY_PATH_FROM_CONFIG
     if [ ! -f "$HYSTERIA_CONFIG_FILE" ]; then _log_error "配置文件 $HYSTERIA_CONFIG_FILE 未找到。"; return 1; fi
     _log_info "正从 $HYSTERIA_CONFIG_FILE 解析配置以生成链接..."
@@ -284,8 +361,20 @@ _get_link_params_from_config() {
 }
 
 _display_link_and_qrcode() {
-    SUBSCRIPTION_LINK="hysteria2://${HY_PASSWORD}@${HY_LINK_ADDRESS}:${HY_PORT}/?sni=${HY_LINK_SNI}&alpn=h3&insecure=${HY_LINK_INSECURE}#Hysteria-${HY_SNI_VALUE}"
-    echo ""; _log_info "Hysteria2 订阅链接 (根据当前配置生成):"
+    local final_remark
+    local geo_remark
+    geo_remark=$(_get_ip_geolocation_remark) # Attempt to get geo-based remark
+
+    if [ -n "$geo_remark" ]; then
+        final_remark="$geo_remark"
+    else
+        _log_info "无法生成地理位置备注，将使用基于SNI的默认备注。"
+        final_remark="Hysteria-${HY_SNI_VALUE}" # HY_SNI_VALUE is set by _get_link_params_from_config
+    fi
+
+    SUBSCRIPTION_LINK="hysteria2://${HY_PASSWORD}@${HY_LINK_ADDRESS}:${HY_PORT}/?sni=${HY_LINK_SNI}&alpn=h3&insecure=${HY_LINK_INSECURE}#${final_remark}"
+    
+    echo ""; _log_info "Hysteria2 订阅链接 (备注: ${final_remark}):"
     echo -e "${GREEN}${SUBSCRIPTION_LINK}${NC}"
     echo ""
     if command -v qrencode &>/dev/null; then
@@ -303,6 +392,7 @@ _display_link_and_qrcode() {
 }
 
 _do_install() {
+    # ... (This function remains the same as v1.5.11, ensuring version check for Hysteria binary and stop before overwrite) ...
     _ensure_root; _detect_os
     if _is_hysteria_installed; then _read_confirm_tty confirm_install "Hysteria 已安装。是否强制安装(覆盖配置)? [y/N]: "; if [[ "$confirm_install" != "y" && "$confirm_install" != "Y" ]]; then _log_info "安装取消。"; exit 0; fi; _log_warning "正强制安装..."; fi
     
@@ -324,7 +414,6 @@ _do_install() {
     _read_from_tty MASQUERADE_URL_INPUT "伪装URL(默认 $DEFAULT_MASQUERADE_URL): "; MASQUERADE_URL=${MASQUERADE_URL_INPUT:-$DEFAULT_MASQUERADE_URL}
     SERVER_PUBLIC_ADDRESS=$(_get_server_address); mkdir -p "$HYSTERIA_CONFIG_DIR"
 
-    # --- Hysteria Binary Download/Check ---
     local perform_hysteria_download=true
     if [ -f "$HYSTERIA_INSTALL_PATH" ] && command -v "$HYSTERIA_INSTALL_PATH" &>/dev/null; then
         _log_info "检测到已安装的 Hysteria 程序，正在检查版本..."
@@ -383,7 +472,6 @@ _do_install() {
              exit 1
         fi
     fi
-    # --- End Hysteria Binary Download/Check ---
 
     if [ "$TLS_TYPE" -eq 2 ]; then _log_info "设置cap_net_bind_service权限(ACME)..."; if ! command -v setcap &>/dev/null; then _log_warning "setcap未找到,尝试安装$SETCAP_DEPENDENCY_PKG..."; if ! $PKG_INSTALL_CMD "$SETCAP_DEPENDENCY_PKG" >/dev/null; then _log_error "安装$SETCAP_DEPENDENCY_PKG失败."; else _log_success "$SETCAP_DEPENDENCY_PKG安装成功."; fi; fi; if command -v setcap &>/dev/null; then if ! setcap 'cap_net_bind_service=+ep' "$HYSTERIA_INSTALL_PATH"; then _log_error "setcap失败."; else _log_success "setcap成功."; fi; else _log_error "setcap仍不可用."; fi; fi
     _log_info "生成配置文件 $HYSTERIA_CONFIG_FILE..."; cat > "$HYSTERIA_CONFIG_FILE" << EOF
@@ -528,10 +616,8 @@ _do_uninstall() {
 
 _control_service() {
     _detect_os; local action="$1"
-    # Check if Hysteria is installed unless we are trying to enable/disable (which might happen during setup)
     if ! _is_hysteria_installed && ! ( [[ "$action" == "enable" || "$action" == "disable" ]] && { [ -f "/etc/init.d/$CURRENT_HYSTERIA_SERVICE_NAME" ] || [ -f "/etc/systemd/system/$CURRENT_HYSTERIA_SERVICE_NAME" ]; } ) ; then
-        # Re-check _is_hysteria_installed in case _detect_os wasn't run by the caller in the right context for this specific check
-        if _is_hysteria_installed; then : # All good, it is installed
+        if _is_hysteria_installed; then :
         else
             _log_error "Hysteria未安装或服务未配置。请用'${SCRIPT_COMMAND_NAME} install'安装。 (Action: $action)"
             return 1
@@ -539,7 +625,7 @@ _control_service() {
     fi
 
     local cmd_to_run=""
-    # Construct the command based on the init system
+    
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then
         cmd_to_run="$SERVICE_CMD $action $CURRENT_HYSTERIA_SERVICE_NAME"
     elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
@@ -609,7 +695,13 @@ _control_service() {
             fi;;
         status)
             _log_info "Hysteria服务状态($CURRENT_HYSTERIA_SERVICE_NAME):"
-            # Command for status is already constructed correctly in cmd_to_run
+            if [[ "$INIT_SYSTEM" == "systemd" ]]; then # Ensure cmd_to_run is correct for status specifically
+                cmd_to_run="$SERVICE_CMD $action $CURRENT_HYSTERIA_SERVICE_NAME"
+            elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
+                 cmd_to_run="$SERVICE_CMD $CURRENT_HYSTERIA_SERVICE_NAME $action"
+            else
+                 _log_error "不支持的初始化系统: $INIT_SYSTEM (action: $action)"; return 1;
+            fi
             eval "$cmd_to_run"; return $?;;
         enable)
             _ensure_root; _log_info "启用Hysteria开机自启...";
