@@ -2,24 +2,27 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-这是一个轻量级多功能 Bash 脚本，旨在简化在 **Debian、Ubuntu 和 Alpine Linux** 系统上自动安装、配置和管理 [Hysteria 2](https://github.com/apernet/hysteria) 服务的过程。脚本提供了一个便捷的 `hy` 命令行工具来执行各种管理任务。
+这是一个轻量级多功能 Bash 脚本，旨在简化在 **Debian 系 (Ubuntu 等)、RHEL 系 (Rocky, AlmaLinux, CentOS/RHEL 8/9, Fedora 等) 及 Alpine Linux** 系统上自动安装、配置和管理 [Hysteria 2](https://github.com/apernet/hysteria) 服务的过程。脚本提供了一个便捷的 `hy` 命令行工具来执行各种管理任务。
 
 ---
 
 ## ✨ 主要功能
 
-- **跨平台兼容**：自动检测并适配 Debian, Ubuntu, Alpine Linux 系统。
-- **依赖自动处理**：使用 `apt` 或 `apk` 自动安装所需依赖包。
+- **广泛的系统兼容性**：自动检测并适配 Debian 系 (Ubuntu 等)、RHEL 系 (Rocky, AlmaLinux, CentOS/RHEL 8/9, Fedora 等) 及 Alpine Linux 系统。
+- **依赖自动处理**：使用 `apt`, `dnf` 或 `apk` 自动安装所需依赖包。
 - **灵活的 TLS 配置**：
   - 支持 **自定义证书**、**自签名证书** 和 **ACME (Let's Encrypt)** 自动申请。
 - **自动生成配置文件**：位于 `/etc/hysteria/config.yaml`。
-- **自动下载最新 Hysteria 2 程序**。
-- **服务管理集成**：支持 systemd (Debian/Ubuntu) 和 OpenRC (Alpine)，自动设置开机自启。
-- **内置 hy 管理命令**：
+- **自动下载最新 Hysteria 2 程序**：安装或更新时，若本地版本非最新，则自动下载。
+- **智能节点备注**：安装或查看信息时，可根据服务器IP地理位置自动生成节点备注 (例如: `美国Hysteria-US`)，方便识别。
+- **服务管理集成**：支持 systemd (Debian/RHEL 系) 和 OpenRC (Alpine)，自动设置开机自启。
+- **内置 `hy` 管理命令**：
   - 启动、停止、重启、查看状态
   - 设置/取消开机自启
-  - 修改配置、查看订阅链接、显示二维码、查看日志
-  - 更新程序和脚本、卸载、显示版本
+  - 修改配置（端口、密码、伪装URL）并自动显示新链接/二维码
+  - 查看订阅链接、显示二维码、查看日志
+  - 更新 Hysteria 程序和 `hy` 脚本自身（带版本对比）
+  - 卸载、显示版本
 
 ---
 
