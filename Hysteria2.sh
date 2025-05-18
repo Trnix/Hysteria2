@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.6.6" # Incremented version
+SCRIPT_VERSION="1.6.7" # Incremented version
 SCRIPT_DATE="2025-05-18"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
@@ -235,20 +235,28 @@ _get_server_address() {
     local ipv4_ip
     _log_debug "检测公网IP..."
     _log_debug "尝试IPv6..."
-    ipv6_ip=$(curl -s -m 5 -6 https://ifconfig.me || curl -s -m 5 -6 https://ip.sb || curl -s -m 5 -6 https://api64.ipify.org)
-    if [ -n "$ipv6_ip" ] && [[ "$ipv6_ip" == *":"* ]]; then
-        _log_debug "IPv6: $ipv6_ip"
-        echo "[$ipv6_ip]"
-        return
-    else _log_debug "无IPv6."; fi
+    for ip_service in "https://ifconfig.me" "https://ip.sb" "https://api64.ipify.org" "https://ipv6.icanhazip.com" "https://v6.ident.me"; do
+        ipv6_ip=$(curl -s -m 5 -6 "$ip_service" || true)
+        if [ -n "$ipv6_ip" ] && [[ "$ipv6_ip" == *":"* ]]; then
+            _log_debug "IPv6: $ipv6_ip"
+            echo "[$ipv6_ip]"
+            return
+        fi
+    done
+    _log_debug "无IPv6."
+
     _log_debug "尝试IPv4..."
-    ipv4_ip=$(curl -s -m 5 -4 https://ifconfig.me || curl -s -m 5 -4 https://ip.sb || curl -s -m 5 -4 https://api.ipify.org)
-    if [ -n "$ipv4_ip" ] && [[ "$ipv4_ip" != *":"* ]]; then
-        _log_debug "IPv4: $ipv4_ip"
-        echo "$ipv4_ip"
-        return
-    else _log_debug "无IPv4."; fi
-    _log_error "无法获取公网IP."
+    for ip_service in "https://ifconfig.me" "https://ip.sb" "https://api.ipify.org" "https://ipv4.icanhazip.com" "https://v4.ident.me"; do
+        ipv4_ip=$(curl -s -m 5 -4 "$ip_service" || true)
+        if [ -n "$ipv4_ip" ] && [[ "$ipv4_ip" != *":"* ]]; then
+            _log_debug "IPv4: $ipv4_ip"
+            echo "$ipv4_ip"
+            return
+        fi
+    done
+    _log_debug "无IPv4."
+
+    _log_error "无法获取公网IP. 请检查网络连接或手动指定IP。"
     exit 1
 }
 
@@ -382,6 +390,7 @@ _get_ip_geolocation_remark() {
     "IN") country_cn="印度" ;;
     "TR") country_cn="土耳其" ;;
     "AE") country_cn="阿联酋" ;;
+    "UA") country_cn="乌克兰" ;;
     *) if [ -n "$country_name_en" ]; then
         country_cn="$country_name_en"
     else
@@ -1718,10 +1727,6 @@ _show_menu() {
     echo "例如: sudo ${SCRIPT_COMMAND_NAME} i"
     echo "      sudo ${SCRIPT_COMMAND_NAME} nfo_mtp"
     echo "      sudo ${SCRIPT_COMMAND_NAME} up"
-    echo ""
-    _log_info "此脚本在执行 'install' 或 'install_mtp' 时会尝试自动安装为 /usr/local/bin/${SCRIPT_COMMAND_NAME} 命令."
-    _log_info "如果自动安装失败或想手动更新(确保URL正确):"
-    echo "  sudo wget -qO \"/usr/local/bin/${SCRIPT_COMMAND_NAME}\" \"$HY_SCRIPT_URL_ON_GITHUB\" && sudo chmod +x \"/usr/local/bin/${SCRIPT_COMMAND_NAME}\""
     echo ""
 }
 _show_management_commands_hint() { _log_info "您可使用 'sudo ${SCRIPT_COMMAND_NAME} help' 或 'sudo ${SCRIPT_COMMAND_NAME} h' 查看管理命令面板。"; }
