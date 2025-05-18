@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.6.7" # Incremented version
+SCRIPT_VERSION="1.6.8" # Incremented version
 SCRIPT_DATE="2025-05-18"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
@@ -982,6 +982,10 @@ _do_uninstall_hysteria() {
     _log_debug "移除Hysteria配置: $HYSTERIA_CONFIG_DIR"
     rm -rf "$HYSTERIA_CONFIG_DIR"
 
+    # 删除所有Hysteria配置备份
+    _log_debug "清理Hysteria配置备份..."
+    find "$(dirname "$HYSTERIA_CONFIG_DIR")" -maxdepth 1 -type d -name "$(basename "$HYSTERIA_CONFIG_DIR")_backup_*" -exec rm -rf {} \;
+
     _log_debug "移除Hysteria日志: $LOG_FILE_HYSTERIA_OUT, $LOG_FILE_HYSTERIA_ERR"
     rm -f "$LOG_FILE_HYSTERIA_OUT" "$LOG_FILE_HYSTERIA_ERR"
 
@@ -1557,6 +1561,11 @@ _do_uninstall_mtp() {
     rm -f "$MTG_INSTALL_PATH"
     _log_debug "移除 MTProto (mtg) 配置目录: $MTG_CONFIG_DIR"
     rm -rf "$MTG_CONFIG_DIR"
+
+    # 删除所有MTProto配置备份
+    _log_debug "清理MTProto配置备份..."
+    find "$(dirname "$MTG_CONFIG_DIR")" -maxdepth 1 -type d -name "$(basename "$MTG_CONFIG_DIR")_backup_*" -exec rm -rf {} \;
+
     _log_debug "移除 MTProto (mtg) 日志文件: $LOG_FILE_MTG_OUT, $LOG_FILE_MTG_ERR"
     rm -f "$LOG_FILE_MTG_OUT" "$LOG_FILE_MTG_ERR"
     _log_success "MTProto (mtg) 卸载完成。"
@@ -1688,6 +1697,8 @@ _show_menu() {
     echo "--------------------------------------------"
     echo -e "${YELLOW}Hysteria 2 管理:${NC}"
     echo "  install (i)         - 安装或重装 Hysteria 2"
+    echo "  add                 - 添加/更换 Hysteria 配置"
+    echo "  del                 - 删除当前 Hysteria 配置"
     echo "  start (run)         - 启动 Hysteria 服务"
     echo "  stop (sp)           - 停止 Hysteria 服务"
     echo "  restart (re, rs)    - 重启 Hysteria 服务"
@@ -1705,6 +1716,8 @@ _show_menu() {
 
     echo -e "\n${YELLOW}MTProto 代理 (mtg) 管理:${NC}"
     echo "  install_mtp (i_mtp) - 安装或重装 MTProto 代理"
+    echo "  add_mtp             - 添加/更换 MTProto 配置"
+    echo "  del_mtp             - 删除当前 MTProto 配置"
     echo "  start_mtp (run_mtp) - 启动 MTProto 服务"
     echo "  stop_mtp (sp_mtp)   - 停止 MTProto 服务"
     echo "  restart_mtp (re_mtp)- 重启 MTProto 服务"
@@ -1718,18 +1731,298 @@ _show_menu() {
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then echo "  logs_sys_mtp (logsy_mtp) - 查看 MTProto systemd 日志"; fi
 
     echo -e "\n${YELLOW}通用命令:${NC}"
-    echo "  uninstall (un, u) - 同时卸载 Hysteria 2, MTProto 及此管理脚本" # Updated description
+    echo "  uninstall (un, u) - 同时卸载 Hysteria 2, MTProto 及此管理脚本"
     echo "  update (up)       - 更新 Hysteria, MTG 程序和此管理脚本"
     echo "  version (v)       - 显示此脚本及已安装服务的版本"
     echo "  help (h)          - 显示此帮助菜单"
     echo "--------------------------------------------"
     echo "用法: sudo ${SCRIPT_COMMAND_NAME} <命令>"
     echo "例如: sudo ${SCRIPT_COMMAND_NAME} i"
-    echo "      sudo ${SCRIPT_COMMAND_NAME} nfo_mtp"
+    echo "      sudo ${SCRIPT_COMMAND_NAME} add"
     echo "      sudo ${SCRIPT_COMMAND_NAME} up"
     echo ""
 }
 _show_management_commands_hint() { _log_info "您可使用 'sudo ${SCRIPT_COMMAND_NAME} help' 或 'sudo ${SCRIPT_COMMAND_NAME} h' 查看管理命令面板。"; }
+
+# --- Config Management Functions ---
+_add_hysteria_config() {
+    _ensure_root
+    _detect_os
+    if ! command -v "$HYSTERIA_INSTALL_PATH" &>/dev/null; then
+        _log_error "Hysteria 程序未安装。请先安装 Hysteria。"
+        return 1
+    fi
+
+    _log_info "添加新的 Hysteria 配置..."
+    local config_dir_new="${HYSTERIA_CONFIG_DIR}_new"
+    local config_file_new="${config_dir_new}/config.yaml"
+    local certs_dir_new="${config_dir_new}/certs"
+
+    mkdir -p "$config_dir_new"
+    mkdir -p "$certs_dir_new"
+
+    DEFAULT_MASQUERADE_URL="https://www.bing.com"
+    DEFAULT_PORT="34567"
+    DEFAULT_ACME_EMAIL="$(_generate_random_lowercase_string)@gmail.com"
+
+    echo ""
+    _log_info "请选择 Hysteria TLS 验证方式:"
+    echo "1. 自定义证书"
+    echo "2. ACME HTTP 验证"
+    _read_from_tty TLS_TYPE "选择 [1-2, 默认 1]: "
+    TLS_TYPE=${TLS_TYPE:-1}
+
+    CERT_PATH=""
+    KEY_PATH=""
+    DOMAIN=""
+    SNI_VALUE=""
+    ACME_EMAIL=""
+
+    case $TLS_TYPE in
+    1)
+        _log_info "--- 自定义证书模式 ---"
+        _read_from_tty USER_CERT_PATH "证书路径(.crt/.pem)(留空则自签): "
+        if [ -z "$USER_CERT_PATH" ]; then
+            _log_info "将生成自签名证书。"
+            if ! command -v openssl &>/dev/null; then
+                _log_error "openssl未安装 ($PKG_INSTALL_CMD openssl)"
+                return 1
+            fi
+            _read_from_tty SELF_SIGN_SNI "自签名证书SNI(默认www.bing.com): "
+            SELF_SIGN_SNI=${SELF_SIGN_SNI:-"www.bing.com"}
+            SNI_VALUE="$SELF_SIGN_SNI"
+            CERT_PATH="$certs_dir_new/server.crt"
+            KEY_PATH="$certs_dir_new/server.key"
+            _log_debug "正生成自签证书(CN=$SNI_VALUE)..."
+            if ! openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) -keyout "$KEY_PATH" -out "$CERT_PATH" -subj "/CN=$SNI_VALUE" -days 36500 >/dev/null 2>&1; then
+                _log_error "自签证书生成失败!"
+                return 1
+            fi
+            _log_success "自签证书已生成: $CERT_PATH, $KEY_PATH"
+        else
+            _log_info "提供证书路径: $USER_CERT_PATH"
+            _read_from_tty USER_KEY_PATH "私钥路径(.key/.pem): "
+            if [ -z "$USER_KEY_PATH" ]; then
+                _log_error "私钥路径不能为空。"
+                return 1
+            fi
+            TMP_CERT_PATH=$(realpath "$USER_CERT_PATH" 2>/dev/null)
+            TMP_KEY_PATH=$(realpath "$USER_KEY_PATH" 2>/dev/null)
+            if [ ! -f "$TMP_CERT_PATH" ]; then
+                _log_error "证书'$USER_CERT_PATH'('$TMP_CERT_PATH')无效."
+                return 1
+            fi
+            if [ ! -f "$TMP_KEY_PATH" ]; then
+                _log_error "私钥'$USER_KEY_PATH'('$TMP_KEY_PATH')无效."
+                return 1
+            fi
+            CERT_PATH="$certs_dir_new/server.crt"
+            KEY_PATH="$certs_dir_new/server.key"
+            cp "$TMP_CERT_PATH" "$CERT_PATH"
+            cp "$TMP_KEY_PATH" "$KEY_PATH"
+            SNI_VALUE=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$CERT_PATH" 2>/dev/null | sed -n 's/.*CN=\([^,]*\).*/\1/p')
+            if [ -z "$SNI_VALUE" ]; then SNI_VALUE=$(openssl x509 -noout -subject -in "$CERT_PATH" 2>/dev/null | sed -n 's/.*CN ?= ?\([^,]*\).*/\1/p' | head -n 1 | sed 's/^[ \t]*//;s/[ \t]*$//'); fi
+            if [ -z "$SNI_VALUE" ]; then SNI_VALUE=$(openssl x509 -noout -text -in "$CERT_PATH" 2>/dev/null | grep 'DNS:' | head -n 1 | sed 's/.*DNS://' | tr -d ' ' | cut -d, -f1); fi
+            if [ -z "$SNI_VALUE" ]; then
+                _read_from_tty MANUAL_SNI "无法提取SNI, 请手动输入: "
+                if [ -z "$MANUAL_SNI" ]; then
+                    _log_error "SNI不能为空!"
+                    return 1
+                fi
+                SNI_VALUE="$MANUAL_SNI"
+            else _log_info "提取到SNI: $SNI_VALUE"; fi
+        fi
+        ;;
+    2)
+        _log_info "--- ACME HTTP 验证 ---"
+        _read_from_tty DOMAIN "域名(eg: example.com): "
+        if [ -z "$DOMAIN" ]; then
+            _log_error "域名不能为空!"
+            return 1
+        fi
+        _read_from_tty INPUT_ACME_EMAIL "ACME邮箱(默认 $DEFAULT_ACME_EMAIL): "
+        ACME_EMAIL=${INPUT_ACME_EMAIL:-$DEFAULT_ACME_EMAIL}
+        if [ -z "$ACME_EMAIL" ]; then
+            _log_error "邮箱不能为空!"
+            return 1
+        fi
+        SNI_VALUE=$DOMAIN
+        _log_debug "检查80端口..."
+        if lsof -i:80 -sTCP:LISTEN -P -n &>/dev/null; then
+            _log_warning "80端口被占用!"
+            PID_80=$(lsof -t -i:80 -sTCP:LISTEN)
+            [ -n "$PID_80" ] && _log_info "占用进程PID: $PID_80"
+        else _log_debug "80端口可用。"; fi
+        ;;
+    *)
+        _log_error "无效TLS选项。"
+        return 1
+        ;;
+    esac
+
+    _read_from_tty PORT_INPUT "Hysteria监听端口(默认 $DEFAULT_PORT): "
+    PORT=${PORT_INPUT:-$DEFAULT_PORT}
+    _read_from_tty PASSWORD_INPUT "Hysteria密码(回车随机): " "random"
+    if [ -z "$PASSWORD_INPUT" ] || [ "$PASSWORD_INPUT" == "random" ]; then
+        PASSWORD=$(_generate_uuid)
+        _log_info "使用随机密码: $PASSWORD"
+    else PASSWORD="$PASSWORD_INPUT"; fi
+    _read_from_tty MASQUERADE_URL_INPUT "伪装URL(默认 $DEFAULT_MASQUERADE_URL): "
+    MASQUERADE_URL=${MASQUERADE_URL_INPUT:-$DEFAULT_MASQUERADE_URL}
+
+    # 生成新配置文件
+    cat >"$config_file_new" <<EOF
+# Hysteria 2 服务器配置文件
+# 由 ${SCRIPT_COMMAND_NAME} v${SCRIPT_VERSION} 在 $(date) 生成
+
+listen: :$PORT
+
+auth:
+  type: password
+  password: $PASSWORD
+
+masquerade:
+  type: proxy
+  proxy:
+    url: $MASQUERADE_URL
+    rewriteHost: true
+EOF
+
+    case $TLS_TYPE in
+    1)
+        cat >>"$config_file_new" <<EOF
+
+tls:
+  cert: $CERT_PATH
+  key: $KEY_PATH
+EOF
+        _log_warning "Hysteria 自定义证书客户端需设insecure:true"
+        ;;
+    2)
+        cat >>"$config_file_new" <<EOF
+
+acme:
+  domains:
+    - $DOMAIN
+  email: $ACME_EMAIL
+EOF
+        ;;
+    esac
+
+    # 备份旧配置
+    if [ -d "$HYSTERIA_CONFIG_DIR" ]; then
+        local backup_dir="${HYSTERIA_CONFIG_DIR}_backup_$(date +%Y%m%d_%H%M%S)"
+        _log_info "备份当前配置到: $backup_dir"
+        mv "$HYSTERIA_CONFIG_DIR" "$backup_dir"
+    fi
+
+    # 应用新配置
+    mv "$config_dir_new" "$HYSTERIA_CONFIG_DIR"
+    _log_success "新配置已应用。"
+
+    # 重启服务
+    _log_info "重启 Hysteria 服务以应用新配置..."
+    _generic_control_service "hysteria" "restart"
+
+    echo "------------------------------------------------------------------------"
+    _show_hysteria_info_and_qrcode
+    echo "------------------------------------------------------------------------"
+}
+
+_delete_hysteria_config() {
+    _ensure_root
+    _detect_os
+    if ! _is_hysteria_installed; then
+        _log_error "Hysteria 未安装或配置不存在。"
+        return 1
+    fi
+
+    _log_warning "此操作将删除当前 Hysteria 配置。"
+    _read_confirm_tty confirm_delete "确定要删除配置吗? [y/N]: "
+    if [[ "$confirm_delete" != "y" && "$confirm_delete" != "Y" ]]; then
+        _log_info "取消删除配置。"
+        return 0
+    fi
+
+    # 停止服务
+    _log_info "停止 Hysteria 服务..."
+    _generic_control_service "hysteria" "stop"
+
+    # 备份配置
+    local backup_dir="${HYSTERIA_CONFIG_DIR}_backup_$(date +%Y%m%d_%H%M%S)"
+    _log_info "备份当前配置到: $backup_dir"
+    mv "$HYSTERIA_CONFIG_DIR" "$backup_dir"
+
+    _log_success "Hysteria 配置已删除并备份。"
+    _log_info "如需添加新配置，请使用: sudo $SCRIPT_COMMAND_NAME add"
+}
+
+_add_mtg_config() {
+    _ensure_root
+    _detect_os
+    if ! command -v "$MTG_INSTALL_PATH" &>/dev/null; then
+        _log_error "MTProto (mtg) 程序未安装。请先安装 MTG。"
+        return 1
+    fi
+
+    _log_info "添加新的 MTProto 配置..."
+    local config_dir_new="${MTG_CONFIG_DIR}_new"
+    mkdir -p "$config_dir_new"
+
+    # 生成新配置
+    if ! _generate_mtg_config; then
+        _log_error "MTG 配置生成失败。"
+        rm -rf "$config_dir_new"
+        return 1
+    fi
+
+    # 备份旧配置
+    if [ -d "$MTG_CONFIG_DIR" ]; then
+        local backup_dir="${MTG_CONFIG_DIR}_backup_$(date +%Y%m%d_%H%M%S)"
+        _log_info "备份当前配置到: $backup_dir"
+        mv "$MTG_CONFIG_DIR" "$backup_dir"
+    fi
+
+    # 应用新配置
+    mv "$config_dir_new" "$MTG_CONFIG_DIR"
+    _log_success "新配置已应用。"
+
+    # 重启服务
+    _log_info "重启 MTProto 服务以应用新配置..."
+    _generic_control_service "mtg" "restart"
+
+    echo "------------------------------------------------------------------------"
+    _show_mtg_info_and_qrcode
+    echo "------------------------------------------------------------------------"
+}
+
+_delete_mtg_config() {
+    _ensure_root
+    _detect_os
+    if ! _is_mtg_installed; then
+        _log_error "MTProto (mtg) 未安装或配置不存在。"
+        return 1
+    fi
+
+    _log_warning "此操作将删除当前 MTProto 配置。"
+    _read_confirm_tty confirm_delete "确定要删除配置吗? [y/N]: "
+    if [[ "$confirm_delete" != "y" && "$confirm_delete" != "Y" ]]; then
+        _log_info "取消删除配置。"
+        return 0
+    fi
+
+    # 停止服务
+    _log_info "停止 MTProto 服务..."
+    _generic_control_service "mtg" "stop"
+
+    # 备份配置
+    local backup_dir="${MTG_CONFIG_DIR}_backup_$(date +%Y%m%d_%H%M%S)"
+    _log_info "备份当前配置到: $backup_dir"
+    mv "$MTG_CONFIG_DIR" "$backup_dir"
+
+    _log_success "MTProto 配置已删除并备份。"
+    _log_info "如需添加新配置，请使用: sudo $SCRIPT_COMMAND_NAME add_mtp"
+}
 
 # --- Main Script Logic ---
 if [[ "$1" != "version" && "$1" != "v" &&
@@ -1899,6 +2192,10 @@ version | v)
     fi
     ;;
 help | h | --help | -h | "") _show_menu ;;
+add) _add_hysteria_config ;;
+del) _delete_hysteria_config ;;
+add_mtp) _add_mtg_config ;;
+del_mtp) _delete_mtg_config ;;
 *)
     _log_error "未知命令: $ACTION"
     _show_menu
