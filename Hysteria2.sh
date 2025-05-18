@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.6.4" # Incremented version
+SCRIPT_VERSION="1.6.5" # Incremented version
 SCRIPT_DATE="2025-05-18"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
@@ -235,7 +235,7 @@ _generic_control_service() {
     case "$action" in
         start|stop|restart)
             _ensure_root; _log_info "执行 (${service_type^}): $cmd_to_run"
-            local cmd_output cmd_exit_code; cmd_output=$(eval "$cmd_to_run" 2>&1); cmd_exit_code=$?
+            local cmd_output cmd_exit_code; cmd_output=$(eval "$cmd_to_run" 2>&1); cmd_exit_code=$? # Eval captures stderr too
             if [[ "$INIT_SYSTEM" == "openrc" && ("$action" == "stop" || "$action" == "restart") ]]; then
                 if echo "$cmd_output" | grep -q "service .* already stopped"; then _log_warning "${service_type^} 服务 '$current_service_name_val' 在尝试停止时已停止。"; if [[ "$action" == "stop" ]]; then cmd_exit_code=0; fi; fi
                 if [[ "$action" == "restart" && $cmd_exit_code -ne 0 && $(echo "$cmd_output" | grep -q "service .* already stopped") ]]; then
@@ -246,22 +246,31 @@ _generic_control_service() {
             if [ $cmd_exit_code -eq 0 ]; then _log_success "操作 '$action' (${service_type^}) 成功。";
                 if [[ "$action" == "start" || "$action" == "restart" ]]; then sleep 1; local status_cmd_to_run="";
                     if [[ "$INIT_SYSTEM" == "systemd" ]]; then status_cmd_to_run="$service_cmd_val status $current_service_name_val"; elif [[ "$INIT_SYSTEM" == "openrc" ]]; then status_cmd_to_run="$service_cmd_val $current_service_name_val status"; fi
-                    if [ -n "$status_cmd_to_run" ]; then status_output=$($status_cmd_to_run 2>&1 | head -n 7); echo "$status_output"; fi
+                    if [ -n "$status_cmd_to_run" ]; then status_output=$($status_cmd_to_run 2>&1 | head -n 7); echo "$status_output"; fi # This will show systemd noise if any
                 fi
-            else _log_error "操作 '$action' (${service_type^}) 失败。输出:"; echo "$cmd_output"; _log_warning "请检查 ${service_type^} 日志:"; echo "  输出: tail -n 30 $log_out_val"; echo "  错误: tail -n 30 $log_err_val";
+            else # cmd_exit_code is not 0
+                 _log_error "操作 '$action' (${service_type^}) 失败。输出:"
+                 # Filter out known systemd noise from cmd_output before printing, if action is 'stop' and service_type is hysteria/mtg for uninstall
+                 if [[ "$action" == "stop" && ("$service_type" == "hysteria" || "$service_type" == "mtg") ]]; then
+                    echo "$cmd_output" | grep -vE "Service Executable path is not absolute|a \.service file without \[Service\] section" || echo " (无特定于 $service_type 的错误)"
+                 else
+                    echo "$cmd_output"
+                 fi
+                _log_warning "请检查 ${service_type^} 日志:"; echo "  输出: tail -n 30 $log_out_val"; echo "  错误: tail -n 30 $log_err_val";
                 if [ "$INIT_SYSTEM" == "systemd" ]; then echo "  Systemd状态: $SERVICE_CMD_SYSTEMCTL status $current_service_name_val"; echo "  Systemd日志: journalctl -u $current_service_name_val -n 20 --no-pager";
                 elif [ "$INIT_SYSTEM" == "openrc" ]; then echo "  OpenRC状态: $SERVICE_CMD_OPENRC $current_service_name_val status"; fi; return 1;
             fi;;
         status)
             _log_info "${service_type^} 服务状态 ($current_service_name_val):"
             if [[ "$INIT_SYSTEM" == "systemd" ]]; then cmd_to_run="$service_cmd_val $action $current_service_name_val"; elif [[ "$INIT_SYSTEM" == "openrc" ]]; then cmd_to_run="$service_cmd_val $current_service_name_val $action"; else return 1; fi
-            eval "$cmd_to_run"; return $?;;
+            eval "$cmd_to_run"; return $?;; # Allow eval to print output directly
         enable)
             _ensure_root; _log_info "启用 ${service_type^} 开机自启...";
             if $ENABLE_CMD_PREFIX "$current_service_name_val" $ENABLE_CMD_SUFFIX >/dev/null 2>&1; then _log_success "已启用 ${service_type^} 开机自启。"; else _log_error "启用 ${service_type^} 开机自启失败。"; return 1; fi;;
         disable)
             _ensure_root; _log_info "禁用 ${service_type^} 开机自启..."; local disable_cmd_ok=false;
-            if [[ "$INIT_SYSTEM" == "systemd" ]]; then if $service_cmd_val disable "$current_service_name_val" >/dev/null 2>&1; then disable_cmd_ok=true; fi
+            # For disable, systemd noise is less critical to hide if the command itself succeeds for our service
+            if [[ "$INIT_SYSTEM" == "systemd" ]]; then if $service_cmd_val disable "$current_service_name_val" >/dev/null 2>/dev/null; then disable_cmd_ok=true; fi # Suppress stderr for cleaner log
             elif [[ "$INIT_SYSTEM" == "openrc" ]]; then if rc-update del "$current_service_name_val" default >/dev/null 2>&1; then disable_cmd_ok=true; fi; fi
             if $disable_cmd_ok; then _log_success "已禁用 ${service_type^} 开机自启。"; else _log_error "禁用 ${service_type^} 开机自启失败"; return 1; fi;;
         *) _log_error "未知服务操作: $action (针对 ${service_type^})"; return 1;;
@@ -319,7 +328,7 @@ Restart=on-failure; RestartSec=10; StandardOutput=append:${LOG_FILE_HYSTERIA_OUT
 [Install]
 WantedBy=multi-user.target
 EOF
-    chmod 644 "/etc/systemd/system/$current_service_name_for_hysteria"; $SERVICE_CMD_SYSTEMCTL daemon-reload;
+    chmod 644 "/etc/systemd/system/$current_service_name_for_hysteria"; $SERVICE_CMD_SYSTEMCTL daemon-reload 2>/dev/null; # Suppress stderr
     elif [[ "$INIT_SYSTEM" == "openrc" ]]; then current_service_name_for_hysteria="$HYSTERIA_SERVICE_NAME_OPENRC"; _log_debug "创建 Hysteria OpenRC服务..."; cat > "/etc/init.d/$current_service_name_for_hysteria" << EOF
 #!/sbin/openrc-run
 name="$HYSTERIA_SERVICE_NAME_OPENRC"
@@ -341,7 +350,7 @@ EOF
 }
 
 _do_uninstall_hysteria() {
-    local skip_confirm_flag="$1" # Parameter to skip internal confirmation
+    local skip_confirm_flag="$1"
     _ensure_root; _detect_os;
     if ! _is_hysteria_installed; then
         _log_info "Hysteria 未安装或未完全安装。跳过 Hysteria 卸载。"
@@ -352,17 +361,18 @@ _do_uninstall_hysteria() {
         _read_confirm_tty confirm_uninstall "这将卸载 Hysteria 并删除所有相关配置和文件。确定? [y/N]: "
         if [[ "$confirm_uninstall" != "y" && "$confirm_uninstall" != "Y" ]]; then
             _log_info "Hysteria 卸载取消。"
-            exit 0 # Exit if this function is called directly and user cancels
+            exit 0
         fi
     fi
     _log_info "正在卸载 Hysteria..."
-    _log_info "停止Hysteria服务..."; _generic_control_service "hysteria" "stop" >/dev/null 2>&1;
+    _log_info "停止Hysteria服务..."; _generic_control_service "hysteria" "stop" # Let _generic_control_service handle its own output/errors for stop
     local current_service_name_val="";
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then
         current_service_name_val="$HYSTERIA_SERVICE_NAME_SYSTEMD"
-        _log_debug "禁用 Hysteria systemd服务..."; "$SERVICE_CMD_SYSTEMCTL" disable "$current_service_name_val" >/dev/null 2>&1;
-        _log_debug "移除 Hysteria systemd服务文件..."; rm -f "/etc/systemd/system/$current_service_name_val"; find /etc/systemd/system/ -name "$current_service_name_val" -delete;
-        "$SERVICE_CMD_SYSTEMCTL" daemon-reload; "$SERVICE_CMD_SYSTEMCTL" reset-failed "$current_service_name_val" >/dev/null 2>&1 || true;
+        _log_debug "禁用 Hysteria systemd服务..."; "$SERVICE_CMD_SYSTEMCTL" disable "$current_service_name_val" >/dev/null 2>/dev/null;
+        _log_debug "移除 Hysteria systemd服务文件..."; rm -f "/etc/systemd/system/$current_service_name_val"; find /etc/systemd/system/ -name "$current_service_name_val" -delete 2>/dev/null;
+        "$SERVICE_CMD_SYSTEMCTL" daemon-reload 2>/dev/null;
+        "$SERVICE_CMD_SYSTEMCTL" reset-failed "$current_service_name_val" >/dev/null 2>/dev/null || true;
     elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
         current_service_name_val="$HYSTERIA_SERVICE_NAME_OPENRC"
         _log_debug "移除 Hysteria OpenRC服务..."; rc-update del "$current_service_name_val" default >/dev/null 2>&1;
@@ -515,7 +525,7 @@ LimitNOFILE=1048576
 [Install]
 WantedBy=multi-user.target
 EOF
-        chmod 644 "/etc/systemd/system/$current_service_name_val"; $SERVICE_CMD_SYSTEMCTL daemon-reload
+        chmod 644 "/etc/systemd/system/$current_service_name_val"; $SERVICE_CMD_SYSTEMCTL daemon-reload 2>/dev/null; # Suppress stderr
     elif [[ "$INIT_SYSTEM" == "openrc" ]]; then current_service_name_val="$MTG_SERVICE_NAME_OPENRC"; _log_debug "创建 OpenRC 服务: $current_service_name_val";
         cat > "/etc/init.d/$current_service_name_val" << EOF
 #!/sbin/openrc-run
@@ -603,7 +613,7 @@ _do_install_mtp() {
 }
 
 _do_uninstall_mtp() {
-    local skip_confirm_flag="$1" # Parameter to skip internal confirmation
+    local skip_confirm_flag="$1"
     _ensure_root; _detect_os
     if ! _is_mtg_installed; then
         _log_info "MTProto 代理 (mtg) 未安装或未完全安装。跳过 MTG 卸载。"
@@ -614,19 +624,21 @@ _do_uninstall_mtp() {
         _read_confirm_tty confirm_uninstall "这将卸载 MTProto 代理 (mtg) 并删除所有相关配置。确定? [y/N]: "
         if [[ "$confirm_uninstall" != "y" && "$confirm_uninstall" != "Y" ]]; then
             _log_info "MTG 卸载取消。"
-            exit 0 # Exit if this function is called directly and user cancels
+            exit 0
         fi
     fi
     _log_info "正在卸载 MTProto (mtg)..."
-    _log_info "停止 MTProto (mtg) 服务..."; _generic_control_service "mtg" "stop" >/dev/null 2>&1;
-    _log_debug "禁用 MTProto (mtg) 服务..."; _generic_control_service "mtg" "disable" >/dev/null 2>&1; # Changed to debug
+    _log_info "停止 MTProto (mtg) 服务..."; _generic_control_service "mtg" "stop" # Let _generic_control_service handle its own output
     local current_service_name_val=""
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then
-        current_service_name_val="$MTG_SERVICE_NAME_SYSTEMD"; _log_debug "移除 MTG systemd 服务文件: $current_service_name_val";
-        rm -f "/etc/systemd/system/$current_service_name_val"; find "/etc/systemd/system/" -name "$current_service_name_val" -delete;
-        $SERVICE_CMD_SYSTEMCTL daemon-reload; $SERVICE_CMD_SYSTEMCTL reset-failed "$current_service_name_val" >/dev/null 2>&1 || true
+        current_service_name_val="$MTG_SERVICE_NAME_SYSTEMD"
+        _log_debug "禁用 MTG systemd 服务..."; "$SERVICE_CMD_SYSTEMCTL" disable "$current_service_name_val" >/dev/null 2>/dev/null;
+        _log_debug "移除 MTG systemd 服务文件: $current_service_name_val"; rm -f "/etc/systemd/system/$current_service_name_val"; find "/etc/systemd/system/" -name "$current_service_name_val" -delete 2>/dev/null;
+        "$SERVICE_CMD_SYSTEMCTL" daemon-reload 2>/dev/null;
+        "$SERVICE_CMD_SYSTEMCTL" reset-failed "$current_service_name_val" >/dev/null 2>/dev/null || true;
     elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
-        current_service_name_val="$MTG_SERVICE_NAME_OPENRC"; _log_debug "移除 MTG OpenRC 服务脚本: $current_service_name_val";
+        current_service_name_val="$MTG_SERVICE_NAME_OPENRC"
+        _log_debug "移除 MTG OpenRC 服务脚本: $current_service_name_val"; rc-update del "$current_service_name_val" default >/dev/null 2>&1;
         rm -f "/etc/init.d/$current_service_name_val";
     fi
     _log_debug "移除 MTProto (mtg) 二进制文件: $MTG_INSTALL_PATH"; rm -f "$MTG_INSTALL_PATH"
@@ -663,12 +675,12 @@ _do_uninstall_all() {
     fi
 
     if $hysteria_is_installed; then
-        _do_uninstall_hysteria "skip_confirm" # Pass flag to skip internal confirmation
+        _do_uninstall_hysteria "skip_confirm"
         echo "---"
     fi
 
     if $mtg_is_installed; then
-        _do_uninstall_mtp "skip_confirm" # Pass flag to skip internal confirmation
+        _do_uninstall_mtp "skip_confirm"
         echo "---"
     fi
     _log_success "所有选定服务的卸载流程执行完毕。"
@@ -724,7 +736,6 @@ _show_menu() {
     echo "--------------------------------------------"
     echo -e "${YELLOW}Hysteria 2 管理:${NC}"
     echo "  install (i)         - 安装或重装 Hysteria 2"
-  # echo "  uninstall_hy      - (旧) 仅卸载 Hysteria 2" # Kept for reference, can be removed
     echo "  start (run)         - 启动 Hysteria 服务"; echo "  stop (sp)           - 停止 Hysteria 服务"
     echo "  restart (re, rs)    - 重启 Hysteria 服务"; echo "  status (st)         - 查看 Hysteria 服务状态"
     echo "  enable (en)         - 设置 Hysteria 开机自启"; echo "  disable (dis)       - 禁止 Hysteria 开机自启"
@@ -738,7 +749,6 @@ _show_menu() {
 
     echo -e "\n${YELLOW}MTProto 代理 (mtg) 管理:${NC}"
     echo "  install_mtp (i_mtp) - 安装或重装 MTProto 代理"
-  # echo "  uninstall_mtp     - (旧) 仅卸载 MTProto 代理" # Kept for reference
     echo "  start_mtp (run_mtp) - 启动 MTProto 服务"; echo "  stop_mtp (sp_mtp)   - 停止 MTProto 服务"
     echo "  restart_mtp (re_mtp)- 重启 MTProto 服务"; echo "  status_mtp (st_mtp) - 查看 MTProto 服务状态"
     echo "  enable_mtp (en_mtp) - 设置 MTProto 开机自启"; echo "  disable_mtp (dis_mtp)- 禁止 MTProto 开机自启"
@@ -770,8 +780,7 @@ fi
 ACTION="$1"
 case "$ACTION" in
     install|i)              _do_install_hysteria ;;
-    uninstall|un|u)         _do_uninstall_all ;; # Changed to universal uninstall
-  # uninstall_hy)           _do_uninstall_hysteria ;; # Kept for reference, can be removed
+    uninstall|un|u)         _do_uninstall_all ;;
     start|run)              _generic_control_service "hysteria" "start" ;;
     stop|sp)                _generic_control_service "hysteria" "stop" ;;
     restart|re|rs)          _generic_control_service "hysteria" "restart" ;;
@@ -807,7 +816,6 @@ case "$ACTION" in
         else _log_error "此命令仅适用于 systemd 系统上的 Hysteria 服务。"; fi ;;
 
     install_mtp|i_mtp)      _do_install_mtp ;;
-  # uninstall_mtp|u_mtp)    _do_uninstall_mtp ;; # Kept for reference, can be removed. Use universal 'uninstall'
     start_mtp|run_mtp)      _generic_control_service "mtg" "start" ;;
     stop_mtp|sp_mtp)        _generic_control_service "mtg" "stop" ;;
     restart_mtp|re_mtp)     _generic_control_service "mtg" "restart" ;;
