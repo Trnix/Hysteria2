@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh" 
-SCRIPT_VERSION="1.6.1" 
+SCRIPT_VERSION="1.6.2" 
 SCRIPT_DATE="2025-05-18"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}" 
@@ -38,6 +38,7 @@ INIT_SYSTEM=""; SERVICE_CMD_SYSTEMCTL="systemctl"; SERVICE_CMD_OPENRC="rc-servic
 ENABLE_CMD_PREFIX=""; ENABLE_CMD_SUFFIX=""
 SETCAP_DEPENDENCY_PKG=""; REQUIRED_PKGS_OS_SPECIFIC="";
 QRENCODE_PACKAGE_NAME=""
+MTG_LINK_VAR="" # Global variable to store parsed MTG link
 
 # --- Utility Functions ---
 _log_error() { echo -e "${RED}错误: $1${NC}" >&2; }
@@ -151,7 +152,6 @@ _install_dependencies() {
     _log_success "依赖包检查与安装完成。"
 }
 
-# ... (Rest of utility functions: _generate_uuid, _get_server_address, _setup_hy_command, _get_remote_script_version, _update_hy_script, _get_ip_geolocation_remark - they remain the same)
 _generate_uuid() { local bytes=$(od -x -N 16 /dev/urandom | head -1 | awk '{OFS=""; $1=""; print}'); local byte7=${bytes:12:4}; byte7=$((0x${byte7} & 0x0fff | 0x4000)); byte7=$(printf "%04x" $byte7); local byte9=${bytes:20:4}; byte9=$((0x${byte9} & 0x3fff | 0x8000)); byte9=$(printf "%04x" $byte9); echo "${bytes:0:8}-${bytes:8:4}-${byte7}-${byte9}-${bytes:24:12}" | tr '[:upper:]' '[:lower:]'; }
 _generate_random_lowercase_string() { LC_ALL=C tr -dc 'a-z' < /dev/urandom | head -c 8; }
 _get_server_address() { local ipv6_ip; local ipv4_ip; _log_info "检测公网IP..."; _log_info "尝试IPv6..."; ipv6_ip=$(curl -s -m 5 -6 https://ifconfig.me || curl -s -m 5 -6 https://ip.sb || curl -s -m 5 -6 https://api64.ipify.org); if [ -n "$ipv6_ip" ] && [[ "$ipv6_ip" == *":"* ]]; then _log_success "IPv6: $ipv6_ip"; echo "[$ipv6_ip]"; return; else _log_warning "无IPv6."; fi; _log_info "尝试IPv4..."; ipv4_ip=$(curl -s -m 5 -4 https://ifconfig.me || curl -s -m 5 -4 https://ip.sb || curl -s -m 5 -4 https://api.ipify.org); if [ -n "$ipv4_ip" ] && [[ "$ipv4_ip" != *":"* ]]; then _log_success "IPv4: $ipv4_ip"; echo "$ipv4_ip"; return; else _log_warning "无IPv4."; fi; _log_error "无法获取公网IP."; exit 1; }
@@ -202,23 +202,15 @@ _get_ip_geolocation_remark() {
     _log_info "根据地理位置生成备注: ${remark}"; echo "$remark"
 }
 
-# --- Generic Service Control (copied from v1.6.0 thought process, with minor adjustments) ---
+# --- Generic Service Control ---
 _generic_control_service() {
-    local service_type="$1" 
-    local action="$2"       
-    _detect_os 
-
+    local service_type="$1"; local action="$2"; _detect_os
     local current_service_name_val log_out_val log_err_val service_cmd_val is_installed_func service_name_systemd_val service_name_openrc_val
-    
     if [[ "$service_type" == "hysteria" ]]; then
-        is_installed_func="_is_hysteria_installed"
-        service_name_systemd_val="$HYSTERIA_SERVICE_NAME_SYSTEMD"
-        service_name_openrc_val="$HYSTERIA_SERVICE_NAME_OPENRC"
+        is_installed_func="_is_hysteria_installed"; service_name_systemd_val="$HYSTERIA_SERVICE_NAME_SYSTEMD"; service_name_openrc_val="$HYSTERIA_SERVICE_NAME_OPENRC";
         log_out_val="$LOG_FILE_HYSTERIA_OUT"; log_err_val="$LOG_FILE_HYSTERIA_ERR";
     elif [[ "$service_type" == "mtg" ]]; then
-        is_installed_func="_is_mtg_installed"
-        service_name_systemd_val="$MTG_SERVICE_NAME_SYSTEMD"
-        service_name_openrc_val="$MTG_SERVICE_NAME_OPENRC"
+        is_installed_func="_is_mtg_installed"; service_name_systemd_val="$MTG_SERVICE_NAME_SYSTEMD"; service_name_openrc_val="$MTG_SERVICE_NAME_OPENRC";
         log_out_val="$LOG_FILE_MTG_OUT"; log_err_val="$LOG_FILE_MTG_ERR";
     else _log_error "内部错误: 未知的服务类型 '$service_type'。"; return 1; fi
 
@@ -357,12 +349,9 @@ _download_mtg_binary() {
     _log_info "下载 MTProto 代理 (9seconds/mtg v2.1.7)..."
     local arch_mtg ARCH; ARCH=$(uname -m)
     case ${ARCH} in
-        x86_64) arch_mtg="amd64";;
-        aarch64) arch_mtg="arm64";;
-        armv7l) arch_mtg="armv7";;
-        armv6l) arch_mtg="armv6";;
-        armhf) arch_mtg="armv7";; 
-        armel) arch_mtg="armv6";; 
+        x86_64) arch_mtg="amd64";; aarch64) arch_mtg="arm64";;
+        armv7l) arch_mtg="armv7";; armv6l) arch_mtg="armv6";;
+        armhf) arch_mtg="armv7";; armel) arch_mtg="armv6";; 
         i386|i686) arch_mtg="386";;
         *) _log_error "MTG: 不支持的系统架构: ${ARCH} (v2.1.7)"; return 1;;
     esac
@@ -374,10 +363,8 @@ _download_mtg_binary() {
     mkdir -p "$tmp_extract_dir";
     if ! tar -xzf "$tmp_archive" -C "$tmp_extract_dir"; then _log_error "解压 MTG 归档文件失败: $tmp_archive"; rm -f "$tmp_archive"; rm -rf "$tmp_extract_dir"; return 1; fi
     local extracted_binary_path="$tmp_extract_dir/mtg-${mtg_version}-linux-${arch_mtg}/mtg";
-    if [ ! -f "$extracted_binary_path" ]; then extracted_binary_path="$tmp_extract_dir/mtg"; fi # Fallback for simpler tar structure
-    if [ -f "$extracted_binary_path" ]; then
-        if ! mv "$extracted_binary_path" "$MTG_INSTALL_PATH"; then _log_error "移动 MTG 二进制文件到 $MTG_INSTALL_PATH 失败。"; rm -f "$tmp_archive"; rm -rf "$tmp_extract_dir"; return 1; fi
-        chmod +x "$MTG_INSTALL_PATH"; _log_success "MTG 二进制文件已安装到 $MTG_INSTALL_PATH";
+    if [ ! -f "$extracted_binary_path" ]; then extracted_binary_path="$tmp_extract_dir/mtg"; fi
+    if [ -f "$extracted_binary_path" ]; then if ! mv "$extracted_binary_path" "$MTG_INSTALL_PATH"; then _log_error "移动 MTG 二进制文件到 $MTG_INSTALL_PATH 失败。"; rm -f "$tmp_archive"; rm -rf "$tmp_extract_dir"; return 1; fi; chmod +x "$MTG_INSTALL_PATH"; _log_success "MTG 二进制文件已安装到 $MTG_INSTALL_PATH";
     else _log_error "在解压的归档中未找到 MTG 二进制文件 (尝试路径: $extracted_binary_path)。"; rm -f "$tmp_archive"; rm -rf "$tmp_extract_dir"; return 1; fi
     rm -f "$tmp_archive"; rm -rf "$tmp_extract_dir"; return 0
 }
@@ -394,12 +381,7 @@ _generate_mtg_config() {
     cat > "$MTG_CONFIG_FILE" << EOF
 # MTProto proxy (mtg) configuration file
 # Generated by ${SCRIPT_COMMAND_NAME} v${SCRIPT_VERSION} on $(date)
-
-# Secret for clients (FakeTLS format, 'ee...' prefixed)
-# This was generated for domain: ${mtg_domain}
 secret = "${mtg_secret}"
-
-# Address and port to bind to
 bind-to = "0.0.0.0:${mtg_port}"
 EOF
     _log_success "MTProto 配置文件已创建。"
@@ -414,7 +396,6 @@ Description=MTProto Proxy Server (mtg) by ${SCRIPT_COMMAND_NAME}
 Documentation=https://github.com/9seconds/mtg
 After=network.target network-online.target
 Wants=network-online.target
-
 [Service]
 Type=simple
 ExecStart=${MTG_INSTALL_PATH} run ${MTG_CONFIG_FILE}
@@ -423,13 +404,6 @@ RestartSec=3
 StandardOutput=append:${LOG_FILE_MTG_OUT}
 StandardError=append:${LOG_FILE_MTG_ERR}
 LimitNOFILE=1048576
-# For better security, if mtg needs to bind to privileged ports (<1024)
-# And systemd version is new enough (v229+ for AmbientCapabilities)
-# Consider using DynamicUser=true and AmbientCapabilities=CAP_NET_BIND_SERVICE
-# User=nobody
-# Group=nogroup
-# AmbientCapabilities=CAP_NET_BIND_SERVICE
-
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -454,15 +428,13 @@ EOF
     _log_success "MTProto 服务文件创建成功。"
 }
 _get_mtg_link_info() {
-    unset MTG_LINK_VAR # Use a specific variable for this function's output
+    MTG_LINK_VAR="" # Reset global var used by display function
     if [ ! -f "$MTG_CONFIG_FILE" ]; then _log_error "MTG 配置文件 $MTG_CONFIG_FILE 未找到。"; return 1; fi
     if ! command -v "$MTG_INSTALL_PATH" &>/dev/null; then _log_error "MTG 程序 $MTG_INSTALL_PATH 未找到。"; return 1; fi
     _log_info "正在从 $MTG_CONFIG_FILE 和 MTG 程序获取连接信息..."; local mtg_access_json
     mtg_access_json=$("$MTG_INSTALL_PATH" access "$MTG_CONFIG_FILE" 2>/dev/null)
     if [ -z "$mtg_access_json" ]; then _log_warning "执行 'mtg access' 命令失败或无输出。尝试手动构造...";
         if [ -f "$MTG_VARS_FILE" ]; then 
-            # Source with a subshell to avoid polluting current shell if vars are bad
-            # And ensure variables are prefixed to avoid clashes if this file is sourced elsewhere.
             local mtg_port_val mtg_secret_val
             mtg_port_val=$(grep '^MTG_PORT=' "$MTG_VARS_FILE" | cut -d"'" -f2)
             mtg_secret_val=$(grep '^MTG_SECRET=' "$MTG_VARS_FILE" | cut -d"'" -f2)
@@ -472,20 +444,36 @@ _get_mtg_link_info() {
             fi; 
         fi; _log_error "无法构造 MTG 链接。"; return 1;
     fi
-    # Try to parse tg_url for IPv4 first, then IPv6 if IPv4 not found
-    MTG_LINK_VAR=$(echo "$mtg_access_json" | grep -o '"ipv4":{[^}]*"tg_url":"[^"]*' | grep -o '"tg_url":"[^"]*' | awk -F'"' '{print $4}');
-    if [ -z "$MTG_LINK_VAR" ]; then MTG_LINK_VAR=$(echo "$mtg_access_json" | grep -o '"ipv6":{[^}]*"tg_url":"[^"]*' | grep -o '"tg_url":"[^"]*' | awk -F'"' '{print $4}'); fi
+    
+    # Robust parsing for tg_url, trying ipv4 first then ipv6 from the JSON structure.
+    # This looks for "tg_url":"<value>" inside an "ipv4":{...} block or "ipv6":{...} block.
+    # It handles spaces and ensures it gets the value within quotes.
+    MTG_LINK_VAR=$(echo "$mtg_access_json" | tr -d '\n\r ' | grep -o '"ipv4":{[^}]*"tg_url":"[^"]*' | grep -o '"tg_url":"[^"]*' | sed -e 's/"tg_url":"//' -e 's/"//')
+    if [ -z "$MTG_LINK_VAR" ]; then
+        MTG_LINK_VAR=$(echo "$mtg_access_json" | tr -d '\n\r ' | grep -o '"ipv6":{[^}]*"tg_url":"[^"]*' | grep -o '"tg_url":"[^"]*' | sed -e 's/"tg_url":"//' -e 's/"//')
+    fi
+    # Fallback: If specific ipv4/ipv6 blocks didn't work, try to find any "tg_url"
+    if [ -z "$MTG_LINK_VAR" ]; then
+         MTG_LINK_VAR=$(echo "$mtg_access_json" | grep -o '"tg_url":"[^"]*"' | head -n 1 | sed -e 's/"tg_url":"//' -e 's/"//g' -e 's/\\//g')
+    fi
+
     if [ -z "$MTG_LINK_VAR" ]; then _log_error "无法从 'mtg access' 输出中解析 tg_url。输出内容:\n$mtg_access_json"; return 1; fi
     _log_success "MTProto 连接信息获取成功。"; return 0
 }
 _display_mtg_link_and_qrcode() {
-    # MTG_LINK_VAR should be set by _get_mtg_link_info
     echo ""; _log_info "MTProto 代理链接 (tg://):"; echo -e "${GREEN}${MTG_LINK_VAR}${NC}";
     local mtg_tme_link;
     if command -v "$MTG_INSTALL_PATH" &>/dev/null && [ -f "$MTG_CONFIG_FILE" ]; then
         local mtg_access_json_for_tme=$("$MTG_INSTALL_PATH" access "$MTG_CONFIG_FILE" 2>/dev/null)
-        mtg_tme_link=$(echo "$mtg_access_json_for_tme" | grep -o '"ipv4":{[^}]*"tme_url":"[^"]*' | grep -o '"tme_url":"[^"]*' | awk -F'"' '{print $4}');
-        if [ -z "$mtg_tme_link" ]; then mtg_tme_link=$(echo "$mtg_access_json_for_tme" | grep -o '"ipv6":{[^}]*"tme_url":"[^"]*' | grep -o '"tme_url":"[^"]*' | awk -F'"' '{print $4}'); fi
+        # Robust parsing for tme_url
+        mtg_tme_link=$(echo "$mtg_access_json_for_tme" | tr -d '\n\r ' | grep -o '"ipv4":{[^}]*"tme_url":"[^"]*' | grep -o '"tme_url":"[^"]*' | sed -e 's/"tme_url":"//' -e 's/"//')
+        if [ -z "$mtg_tme_link" ]; then
+            mtg_tme_link=$(echo "$mtg_access_json_for_tme" | tr -d '\n\r ' | grep -o '"ipv6":{[^}]*"tme_url":"[^"]*' | grep -o '"tme_url":"[^"]*' | sed -e 's/"tme_url":"//' -e 's/"//')
+        fi
+        if [ -z "$mtg_tme_link" ]; then
+            mtg_tme_link=$(echo "$mtg_access_json_for_tme" | grep -o '"tme_url":"[^"]*"' | head -n 1 | sed -e 's/"tme_url":"//' -e 's/"//g' -e 's/\\//g')
+        fi
+
         if [ -n "$mtg_tme_link" ]; then echo ""; _log_info "MTProto (t.me) 链接:"; echo -e "${GREEN}${mtg_tme_link}${NC}"; fi
     fi
     echo ""; if command -v qrencode &>/dev/null; then _log_info "MTProto 代理 tg:// 链接二维码:"; qrencode -t ANSIUTF8 "$MTG_LINK_VAR";
@@ -493,7 +481,6 @@ _display_mtg_link_and_qrcode() {
 }
 _show_mtg_info_and_qrcode() {
     _detect_os; if ! _is_mtg_installed; then _log_error "MTProto 代理 (mtg) 未安装。"; return 1; fi
-    # MTG_LINK_VAR will be set globally by _get_mtg_link_info if successful
     if ! _get_mtg_link_info; then _log_error "无法获取 MTProto 连接信息。"; return 1; fi
     _display_mtg_link_and_qrcode
 }
@@ -502,7 +489,7 @@ _do_install_mtp() {
     if _is_mtg_installed; then _read_confirm_tty confirm_mtg_install "MTProto 代理 (mtg) 已安装。是否强制安装(覆盖配置)? [y/N]: "; if [[ "$confirm_mtg_install" != "y" && "$confirm_mtg_install" != "Y" ]]; then _log_info "MTG 安装取消。"; return 0; fi; _log_warning "正强制安装 MTG...";
     else _log_info "准备首次安装 MTProto 代理 (mtg)..."; fi
     _log_info "--- 开始 MTProto (mtg) 依赖和程序安装 ---"
-    _install_dependencies # Ensure common dependencies
+    _install_dependencies 
     if ! _download_mtg_binary; then _log_error "MTG 二进制文件下载失败。中止安装。"; return 1; fi
     if ! _generate_mtg_config; then _log_error "MTG 配置文件生成失败。中止安装。"; return 1; fi
     if ! _create_mtg_service_file; then _log_error "MTG 服务文件创建失败。中止安装。"; return 1; fi
@@ -521,19 +508,19 @@ _do_uninstall_mtp() {
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then current_service_name_val="$MTG_SERVICE_NAME_SYSTEMD"; _log_info "移除 MTG systemd 服务文件: $current_service_name_val"; rm -f "/etc/systemd/system/$current_service_name_val"; find "/etc/systemd/system/" -name "$current_service_name_val" -delete; $SERVICE_CMD_SYSTEMCTL daemon-reload; $SERVICE_CMD_SYSTEMCTL reset-failed "$current_service_name_val" >/dev/null 2>&1 || true
     elif [[ "$INIT_SYSTEM" == "openrc" ]]; then current_service_name_val="$MTG_SERVICE_NAME_OPENRC"; _log_info "移除 MTG OpenRC 服务脚本: $current_service_name_val"; rm -f "/etc/init.d/$current_service_name_val"; fi
     _log_info "移除 MTProto (mtg) 二进制文件: $MTG_INSTALL_PATH"; rm -f "$MTG_INSTALL_PATH"
-    _log_info "移除 MTProto (mtg) 配置目录: $MTG_CONFIG_DIR"; rm -rf "$MTG_CONFIG_DIR" # also removes MTG_VARS_FILE
+    _log_info "移除 MTProto (mtg) 配置目录: $MTG_CONFIG_DIR"; rm -rf "$MTG_CONFIG_DIR" 
     _log_info "移除 MTProto (mtg) 日志文件: $LOG_FILE_MTG_OUT, $LOG_FILE_MTG_ERR"; rm -f "$LOG_FILE_MTG_OUT" "$LOG_FILE_MTG_ERR"
     _log_success "MTProto (mtg) 卸载完成。"
 }
 _edit_mtg_config() {
-    _ensure_root; if ! _is_mtg_installed; then _log_error "MTProto (mtg) 未安装."; exit 1; fi;
+    _ensure_root; _detect_os; if ! _is_mtg_installed; then _log_error "MTProto (mtg) 未安装."; exit 1; fi;
     if [ -z "$EDITOR" ]; then EDITOR="vi"; fi
     _log_info "使用 $EDITOR 打开 MTProto (mtg) 配置文件 $MTG_CONFIG_FILE ...";
     if $EDITOR "$MTG_CONFIG_FILE"; then _log_info "编辑完成。请使用 'sudo $SCRIPT_COMMAND_NAME restart_mtp' 重启服务以应用更改。";
     else _log_error "编辑器 '$EDITOR' 返回错误。"; fi
 }
 
-# --- General Update Function (updates Hysteria binary and this script) ---
+# --- General Update Function ---
 _do_update() { 
     local hy_program_update_ok=false; local script_self_update_ok=false
     _log_info "== 正在更新 Hysteria 程序 =="; if _update_hysteria_binary; then hy_program_update_ok=true; fi
@@ -572,9 +559,8 @@ _show_menu() {
     echo "  enable_mtp      - 设置 MTProto 开机自启"; echo "  disable_mtp     - 禁止 MTProto 开机自启"
     echo "  info_mtp        - 显示 MTProto 链接和二维码"
     echo "  config_mtp_edit - 手动编辑 MTProto 配置文件"
-    # echo "  config_mtp_change - (TODO) 交互修改 MTProto 配置" 
-    echo "  logs_mtp        - 查看 MTProto 输出日志" # Generic, handled by logic in case
-    echo "  logs_err_mtp    - 查看 MTProto 错误日志" # Generic, handled by logic in case
+    echo "  logs_mtp        - 查看 MTProto 输出日志" 
+    echo "  logs_err_mtp    - 查看 MTProto 错误日志" 
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then echo "  logs_sys_mtp    - 查看 MTProto systemd 日志"; fi
 
     echo -e "\n${YELLOW}通用命令:${NC}"
@@ -607,8 +593,8 @@ case "$ACTION" in
     config)                 _show_hysteria_config ;;
     config_edit)            _ensure_root; if ! _is_hysteria_installed; then _log_error "Hysteria未安装."; exit 1; fi; if [ -z "$EDITOR" ]; then EDITOR="vi"; fi; _log_info "使用 $EDITOR 打开 Hysteria 配置文件 $HYSTERIA_CONFIG_FILE ..."; if $EDITOR "$HYSTERIA_CONFIG_FILE"; then _log_info "编辑完成。考虑重启服务: sudo $SCRIPT_COMMAND_NAME restart"; else _log_error "编辑器 '$EDITOR' 返回错误。"; fi ;;
     config_change)          _change_hysteria_config_interactive ;;
-    logs)                   _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [[ "$INIT_SYSTEM" == "openrc" ]] && [ ! -f "$LOG_FILE_HYSTERIA_OUT" ]; then _log_error "Hysteria 日志文件 $LOG_FILE_HYSTERIA_OUT 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 (Hysteria 日志 $LOG_FILE_HYSTERIA_OUT)。"; tail -f "$LOG_FILE_HYSTERIA_OUT" ;;
-    logs_err)               _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [[ "$INIT_SYSTEM" == "openrc" ]] && [ ! -f "$LOG_FILE_HYSTERIA_ERR" ]; then _log_error "Hysteria 错误日志 $LOG_FILE_HYSTERIA_ERR 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 (Hysteria 错误日志 $LOG_FILE_HYSTERIA_ERR)。"; tail -f "$LOG_FILE_HYSTERIA_ERR" ;;
+    logs)                   _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [[ "$INIT_SYSTEM" == "openrc" ]] && [ ! -f "$LOG_FILE_HYSTERIA_OUT" ]; then _log_error "Hysteria 日志文件 $LOG_FILE_HYSTERIA_OUT 不存在。"; exit 1; elif [[ "$INIT_SYSTEM" == "systemd" ]] && [ ! -f "$LOG_FILE_HYSTERIA_OUT" ] && ! journalctl -u "$HYSTERIA_SERVICE_NAME_SYSTEMD" -n 1 --no-pager --quiet &>/dev/null; then _log_info "Hysteria Systemd 日志似乎也为空或服务从未成功启动过。"; if [ ! -f "$LOG_FILE_HYSTERIA_OUT" ]; then _log_error "Hysteria 日志文件 $LOG_FILE_HYSTERIA_OUT 也不存在。"; exit 1; fi; fi; _log_info "按 CTRL+C 退出 (Hysteria 日志 $LOG_FILE_HYSTERIA_OUT)。"; tail -f "$LOG_FILE_HYSTERIA_OUT" ;;
+    logs_err)               _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [[ "$INIT_SYSTEM" == "openrc" ]] && [ ! -f "$LOG_FILE_HYSTERIA_ERR" ]; then _log_error "Hysteria 错误日志 $LOG_FILE_HYSTERIA_ERR 不存在。"; exit 1; elif [[ "$INIT_SYSTEM" == "systemd" ]] && [ ! -f "$LOG_FILE_HYSTERIA_ERR" ] && ! journalctl -u "$HYSTERIA_SERVICE_NAME_SYSTEMD" -n 1 --no-pager --quiet &>/dev/null; then _log_info "Hysteria Systemd 日志似乎也为空或服务从未成功启动过。"; if [ ! -f "$LOG_FILE_HYSTERIA_ERR" ]; then _log_error "Hysteria 错误日志 $LOG_FILE_HYSTERIA_ERR 也不存在。"; exit 1; fi; fi; _log_info "按 CTRL+C 退出 (Hysteria 错误日志 $LOG_FILE_HYSTERIA_ERR)。"; tail -f "$LOG_FILE_HYSTERIA_ERR" ;;
     logs_sys)
         _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; _log_info "按 CTRL+C 退出 (Hysteria systemd 日志)。"; journalctl -u "$HYSTERIA_SERVICE_NAME_SYSTEMD" -f --no-pager;
         else _log_error "此命令仅适用于 systemd 系统上的 Hysteria 服务。"; fi ;;
@@ -626,12 +612,12 @@ case "$ACTION" in
     logs_mtp)
         _detect_os; if ! _is_mtg_installed; then _log_error "MTProto (mtg) 未安装。"; exit 1; fi;
         if [[ "$INIT_SYSTEM" == "openrc" ]]; then if [ ! -f "$LOG_FILE_MTG_OUT" ]; then _log_error "MTG 日志文件 $LOG_FILE_MTG_OUT 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 (MTG 日志 $LOG_FILE_MTG_OUT)。"; tail -f "$LOG_FILE_MTG_OUT";
-        elif [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "对于 systemd 系统, MTG 日志在 journald。将尝试显示 systemd 日志 (同 logs_sys_mtp)。"; "$0" logs_sys_mtp;
+        elif [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "对于 systemd 系统, MTG 日志将显示在标准输出/错误日志文件 (如果服务配置了重定向) 或 journald。将尝试显示 systemd 日志。"; "$0" logs_sys_mtp; # $0 calls the script itself
         else _log_error "未知初始化系统，无法确定MTG日志位置。"; fi ;;
     logs_err_mtp)
         _detect_os; if ! _is_mtg_installed; then _log_error "MTProto (mtg) 未安装。"; exit 1; fi;
         if [[ "$INIT_SYSTEM" == "openrc" ]]; then if [ ! -f "$LOG_FILE_MTG_ERR" ]; then _log_error "MTG 错误日志 $LOG_FILE_MTG_ERR 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 (MTG 错误日志 $LOG_FILE_MTG_ERR)。"; tail -f "$LOG_FILE_MTG_ERR";
-        elif [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "对于 systemd 系统, MTG 错误日志在 journald (与主日志混合)。将尝试显示 systemd 日志 (同 logs_sys_mtp)。"; "$0" logs_sys_mtp;
+        elif [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "对于 systemd 系统, MTG 错误日志在标准输出/错误日志文件 (如果服务配置了重定向) 或 journald。将尝试显示 systemd 日志。"; "$0" logs_sys_mtp;
         else _log_error "未知初始化系统，无法确定MTG错误日志位置。"; fi ;;
     logs_sys_mtp)
         _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then if ! _is_mtg_installed; then _log_error "MTProto (mtg) 未安装。"; exit 1; fi; _log_info "按 CTRL+C 退出 (MTG systemd 日志)。"; journalctl -u "$MTG_SERVICE_NAME_SYSTEMD" -f --no-pager;
@@ -640,18 +626,20 @@ case "$ACTION" in
     update)                 _do_update ;;
     version)
         echo "$SCRIPT_COMMAND_NAME 管理脚本 v$SCRIPT_VERSION ($SCRIPT_DATE)"; echo "脚本文件: $SCRIPT_FILE_BASENAME"
-        if _is_hysteria_installed || _is_mtg_installed; then _detect_os &>/dev/null; fi
+        if _is_hysteria_installed || _is_mtg_installed; then _detect_os &>/dev/null; fi # Light OS detection if needed
         if _is_hysteria_installed && command -v "$HYSTERIA_INSTALL_PATH" &>/dev/null; then
             HY_VERSION_RAW=$("$HYSTERIA_INSTALL_PATH" version 2>/dev/null | grep '^Version:' | awk '{print $2}')
             HY_VERSION=$(echo "$HY_VERSION_RAW" | sed 's#^v##')
             if [ -n "$HY_VERSION" ]; then echo "已安装 Hysteria 版本: $HY_VERSION_RAW (规范化为: $HY_VERSION)"; else _log_warning "无法从 '$HYSTERIA_INSTALL_PATH version' 解析 Hysteria 版本号。"; fi
-        else _log_warning "Hysteria 未安装或 $HYSTERIA_INSTALL_PATH 未找到。"
+        elif _is_hysteria_installed; then _log_warning "Hysteria 部分安装 (程序文件 $HYSTERIA_INSTALL_PATH 未找到或不可执行)。"
+        else _log_info "Hysteria 未安装。" # More neutral if just not installed
         fi
         if _is_mtg_installed && command -v "$MTG_INSTALL_PATH" &>/dev/null; then
             MTG_VERSION_FULL=$("$MTG_INSTALL_PATH" --version 2>/dev/null); if [ -z "$MTG_VERSION_FULL" ]; then MTG_VERSION_FULL=$("$MTG_INSTALL_PATH" -v 2>/dev/null); fi 
             MTG_VERSION=$(echo "$MTG_VERSION_FULL" | awk '/version/{print $3}' | sed 's/,//g') 
-            if [ -n "$MTG_VERSION" ]; then echo "已安装 MTG 版本: $MTG_VERSION (提示: 9seconds/mtg v2.x 最新为 v2.2.2, 但我们使用 v2.1.7)"; else _log_warning "无法从 '$MTG_INSTALL_PATH -v/--version' 解析 MTG 版本号 (输出: $MTG_VERSION_FULL)。"; fi
-        else _log_warning "MTProto (mtg) 未安装或 $MTG_INSTALL_PATH 未找到。"
+            if [ -n "$MTG_VERSION" ]; then echo "已安装 MTG 版本: $MTG_VERSION (提示: 使用 9seconds/mtg v2.1.7)"; else _log_warning "无法从 '$MTG_INSTALL_PATH -v/--version' 解析 MTG 版本号 (输出: $MTG_VERSION_FULL)。"; fi
+        elif _is_mtg_installed; then _log_warning "MTProto (mtg) 部分安装 (程序文件 $MTG_INSTALL_PATH 未找到或不可执行)。"
+        else _log_info "MTProto (mtg) 未安装。"
         fi
         ;;
     help|--help|-h|"")     _show_menu ;;
