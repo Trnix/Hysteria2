@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.6.5" # Incremented version
+SCRIPT_VERSION="1.6.6" # Incremented version
 SCRIPT_DATE="2025-05-18"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
@@ -235,7 +235,7 @@ _generic_control_service() {
     case "$action" in
         start|stop|restart)
             _ensure_root; _log_info "执行 (${service_type^}): $cmd_to_run"
-            local cmd_output cmd_exit_code; cmd_output=$(eval "$cmd_to_run" 2>&1); cmd_exit_code=$? # Eval captures stderr too
+            local cmd_output cmd_exit_code; cmd_output=$(eval "$cmd_to_run" 2>&1); cmd_exit_code=$?
             if [[ "$INIT_SYSTEM" == "openrc" && ("$action" == "stop" || "$action" == "restart") ]]; then
                 if echo "$cmd_output" | grep -q "service .* already stopped"; then _log_warning "${service_type^} 服务 '$current_service_name_val' 在尝试停止时已停止。"; if [[ "$action" == "stop" ]]; then cmd_exit_code=0; fi; fi
                 if [[ "$action" == "restart" && $cmd_exit_code -ne 0 && $(echo "$cmd_output" | grep -q "service .* already stopped") ]]; then
@@ -246,13 +246,12 @@ _generic_control_service() {
             if [ $cmd_exit_code -eq 0 ]; then _log_success "操作 '$action' (${service_type^}) 成功。";
                 if [[ "$action" == "start" || "$action" == "restart" ]]; then sleep 1; local status_cmd_to_run="";
                     if [[ "$INIT_SYSTEM" == "systemd" ]]; then status_cmd_to_run="$service_cmd_val status $current_service_name_val"; elif [[ "$INIT_SYSTEM" == "openrc" ]]; then status_cmd_to_run="$service_cmd_val $current_service_name_val status"; fi
-                    if [ -n "$status_cmd_to_run" ]; then status_output=$($status_cmd_to_run 2>&1 | head -n 7); echo "$status_output"; fi # This will show systemd noise if any
+                    if [ -n "$status_cmd_to_run" ]; then status_output=$($status_cmd_to_run 2>&1 | head -n 7); echo "$status_output"; fi
                 fi
-            else # cmd_exit_code is not 0
+            else
                  _log_error "操作 '$action' (${service_type^}) 失败。输出:"
-                 # Filter out known systemd noise from cmd_output before printing, if action is 'stop' and service_type is hysteria/mtg for uninstall
                  if [[ "$action" == "stop" && ("$service_type" == "hysteria" || "$service_type" == "mtg") ]]; then
-                    echo "$cmd_output" | grep -vE "Service Executable path is not absolute|a \.service file without \[Service\] section" || echo " (无特定于 $service_type 的错误)"
+                    echo "$cmd_output" | grep -vE "Service Executable path is not absolute|a \.service file without \[Service\] section" || echo " (无特定于 $service_type 的错误信息从服务停止命令)"
                  else
                     echo "$cmd_output"
                  fi
@@ -263,14 +262,13 @@ _generic_control_service() {
         status)
             _log_info "${service_type^} 服务状态 ($current_service_name_val):"
             if [[ "$INIT_SYSTEM" == "systemd" ]]; then cmd_to_run="$service_cmd_val $action $current_service_name_val"; elif [[ "$INIT_SYSTEM" == "openrc" ]]; then cmd_to_run="$service_cmd_val $current_service_name_val $action"; else return 1; fi
-            eval "$cmd_to_run"; return $?;; # Allow eval to print output directly
+            eval "$cmd_to_run"; return $?;;
         enable)
             _ensure_root; _log_info "启用 ${service_type^} 开机自启...";
             if $ENABLE_CMD_PREFIX "$current_service_name_val" $ENABLE_CMD_SUFFIX >/dev/null 2>&1; then _log_success "已启用 ${service_type^} 开机自启。"; else _log_error "启用 ${service_type^} 开机自启失败。"; return 1; fi;;
         disable)
             _ensure_root; _log_info "禁用 ${service_type^} 开机自启..."; local disable_cmd_ok=false;
-            # For disable, systemd noise is less critical to hide if the command itself succeeds for our service
-            if [[ "$INIT_SYSTEM" == "systemd" ]]; then if $service_cmd_val disable "$current_service_name_val" >/dev/null 2>/dev/null; then disable_cmd_ok=true; fi # Suppress stderr for cleaner log
+            if [[ "$INIT_SYSTEM" == "systemd" ]]; then if $service_cmd_val disable "$current_service_name_val" >/dev/null 2>/dev/null; then disable_cmd_ok=true; fi
             elif [[ "$INIT_SYSTEM" == "openrc" ]]; then if rc-update del "$current_service_name_val" default >/dev/null 2>&1; then disable_cmd_ok=true; fi; fi
             if $disable_cmd_ok; then _log_success "已禁用 ${service_type^} 开机自启。"; else _log_error "禁用 ${service_type^} 开机自启失败"; return 1; fi;;
         *) _log_error "未知服务操作: $action (针对 ${service_type^})"; return 1;;
@@ -328,7 +326,7 @@ Restart=on-failure; RestartSec=10; StandardOutput=append:${LOG_FILE_HYSTERIA_OUT
 [Install]
 WantedBy=multi-user.target
 EOF
-    chmod 644 "/etc/systemd/system/$current_service_name_for_hysteria"; $SERVICE_CMD_SYSTEMCTL daemon-reload 2>/dev/null; # Suppress stderr
+    chmod 644 "/etc/systemd/system/$current_service_name_for_hysteria"; $SERVICE_CMD_SYSTEMCTL daemon-reload 2>/dev/null;
     elif [[ "$INIT_SYSTEM" == "openrc" ]]; then current_service_name_for_hysteria="$HYSTERIA_SERVICE_NAME_OPENRC"; _log_debug "创建 Hysteria OpenRC服务..."; cat > "/etc/init.d/$current_service_name_for_hysteria" << EOF
 #!/sbin/openrc-run
 name="$HYSTERIA_SERVICE_NAME_OPENRC"
@@ -365,7 +363,7 @@ _do_uninstall_hysteria() {
         fi
     fi
     _log_info "正在卸载 Hysteria..."
-    _log_info "停止Hysteria服务..."; _generic_control_service "hysteria" "stop" # Let _generic_control_service handle its own output/errors for stop
+    _log_info "停止Hysteria服务..."; _generic_control_service "hysteria" "stop"
     local current_service_name_val="";
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then
         current_service_name_val="$HYSTERIA_SERVICE_NAME_SYSTEMD"
@@ -525,7 +523,7 @@ LimitNOFILE=1048576
 [Install]
 WantedBy=multi-user.target
 EOF
-        chmod 644 "/etc/systemd/system/$current_service_name_val"; $SERVICE_CMD_SYSTEMCTL daemon-reload 2>/dev/null; # Suppress stderr
+        chmod 644 "/etc/systemd/system/$current_service_name_val"; $SERVICE_CMD_SYSTEMCTL daemon-reload 2>/dev/null;
     elif [[ "$INIT_SYSTEM" == "openrc" ]]; then current_service_name_val="$MTG_SERVICE_NAME_OPENRC"; _log_debug "创建 OpenRC 服务: $current_service_name_val";
         cat > "/etc/init.d/$current_service_name_val" << EOF
 #!/sbin/openrc-run
@@ -628,7 +626,7 @@ _do_uninstall_mtp() {
         fi
     fi
     _log_info "正在卸载 MTProto (mtg)..."
-    _log_info "停止 MTProto (mtg) 服务..."; _generic_control_service "mtg" "stop" # Let _generic_control_service handle its own output
+    _log_info "停止 MTProto (mtg) 服务..."; _generic_control_service "mtg" "stop"
     local current_service_name_val=""
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then
         current_service_name_val="$MTG_SERVICE_NAME_SYSTEMD"
@@ -653,22 +651,41 @@ _do_uninstall_all() {
 
     local hysteria_is_installed=false
     local mtg_is_installed=false
+    local script_is_installed=false
+    local installed_script_path="/usr/local/bin/${SCRIPT_COMMAND_NAME}"
+
     if _is_hysteria_installed; then hysteria_is_installed=true; fi
     if _is_mtg_installed; then mtg_is_installed=true; fi
+    if [ -f "$installed_script_path" ]; then script_is_installed=true; fi
 
-    if ! $hysteria_is_installed && ! $mtg_is_installed; then
-        _log_info "Hysteria 和 MTProto 均未安装。无需卸载。"
+    if ! $hysteria_is_installed && ! $mtg_is_installed && ! $script_is_installed; then
+        _log_info "Hysteria, MTProto, 和管理脚本 ${SCRIPT_COMMAND_NAME} 均未安装或未找到。无需卸载。"
         return 0
     fi
 
-    local services_to_uninstall=""
-    if $hysteria_is_installed; then services_to_uninstall="Hysteria"; fi
-    if $mtg_is_installed; then
-        if [ -n "$services_to_uninstall" ]; then services_to_uninstall="${services_to_uninstall} 和 MTProto"; else services_to_uninstall="MTProto"; fi
+    local components_to_uninstall=()
+    if $hysteria_is_installed; then components_to_uninstall+=("Hysteria 服务"); fi
+    if $mtg_is_installed; then components_to_uninstall+=("MTProto 服务"); fi
+    if $script_is_installed; then components_to_uninstall+=("管理脚本 ${SCRIPT_COMMAND_NAME} (${installed_script_path})"); fi
+    
+    local uninstall_message_list=""
+    for i in "${!components_to_uninstall[@]}"; do
+        uninstall_message_list+="${components_to_uninstall[$i]}"
+        if [ $i -lt $((${#components_to_uninstall[@]} - 1)) ]; then
+            uninstall_message_list+=", "
+        fi
+    done
+    if [[ "$uninstall_message_list" == *, ]]; then # Remove trailing comma if only one item had a comma (should not happen with current logic but good practice)
+        uninstall_message_list="${uninstall_message_list%, }"
+    fi
+    
+    # Replace last comma with '和' if multiple items
+    if [[ "$uninstall_message_list" == *", "* ]]; then
+        uninstall_message_list=$(echo "$uninstall_message_list" | sed 's/\(.*\),/\1 和/')
     fi
 
-    _log_warning "此操作将尝试卸载 ${services_to_uninstall} 及其所有相关配置和文件。"
-    _read_confirm_tty confirm_all "确定要继续吗? [y/N]: "
+    _log_warning "此操作将尝试卸载 ${uninstall_message_list} 及其所有相关配置和文件。"
+    _read_confirm_tty confirm_all "确定要继续彻底清理吗? [y/N]: "
     if [[ "$confirm_all" != "y" && "$confirm_all" != "Y" ]]; then
         _log_info "卸载操作已取消。"
         exit 0
@@ -683,8 +700,21 @@ _do_uninstall_all() {
         _do_uninstall_mtp "skip_confirm"
         echo "---"
     fi
-    _log_success "所有选定服务的卸载流程执行完毕。"
+
+    if $script_is_installed; then
+        _log_info "正在移除管理脚本 ${installed_script_path}..."
+        if rm -f "${installed_script_path}"; then
+            _log_success "管理脚本 ${installed_script_path} 已移除。"
+            _log_info "如需再次使用, 请从 GitHub 重新下载并运行。"
+        else
+            _log_error "移除管理脚本 ${installed_script_path} 失败。请检查权限或手动删除: sudo rm -f ${installed_script_path}"
+        fi
+        echo "---"
+    fi
+
+    _log_success "所有卸载流程执行完毕。"
 }
+
 
 _edit_mtg_config() {
     _ensure_root; _detect_os; if ! _is_mtg_installed; then _log_error "MTProto (mtg) 未安装."; exit 1; fi;
@@ -759,7 +789,7 @@ _show_menu() {
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then echo "  logs_sys_mtp (logsy_mtp) - 查看 MTProto systemd 日志"; fi
 
     echo -e "\n${YELLOW}通用命令:${NC}"
-    echo "  uninstall (un, u) - 同时卸载 Hysteria 2 和 MTProto"
+    echo "  uninstall (un, u) - 同时卸载 Hysteria 2, MTProto 及此管理脚本" # Updated description
     echo "  update (up)       - 更新 Hysteria, MTG 程序和此管理脚本"
     echo "  version (v)       - 显示此脚本及已安装服务的版本"
     echo "  help (h)          - 显示此帮助菜单"
