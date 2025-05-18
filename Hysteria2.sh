@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.7" # Incremented version
+SCRIPT_VERSION="1.7.1" # Incremented version
 SCRIPT_DATE="2025-05-18"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
@@ -154,7 +154,7 @@ _install_dependencies() {
         exit 1
     fi
     _log_debug "检查并安装依赖包..."
-    REQUIRED_PKGS_COMMON="wget curl git openssl lsof coreutils"
+    REQUIRED_PKGS_COMMON="wget curl git openssl lsof coreutils tar"
     REQUIRED_PKGS="$REQUIRED_PKGS_COMMON"
     if [ -n "$QRENCODE_PACKAGE_NAME" ]; then REQUIRED_PKGS="$REQUIRED_PKGS $QRENCODE_PACKAGE_NAME"; fi
     if [ -n "$REQUIRED_PKGS_OS_SPECIFIC" ]; then REQUIRED_PKGS="$REQUIRED_PKGS $REQUIRED_PKGS_OS_SPECIFIC"; fi
