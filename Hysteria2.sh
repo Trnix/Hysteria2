@@ -702,17 +702,16 @@ _do_uninstall_all() {
     fi
 
     if $script_is_installed; then
-        _log_info "正在移除管理脚本 ${installed_script_path}..."
         if rm -f "${installed_script_path}"; then
-            _log_success "管理脚本 ${installed_script_path} 已移除。"
-            _log_info "如需再次使用, 请从 GitHub 重新下载并运行。"
+            _log_success "所有卸载流程执行完毕。"
+            _log_info "脚本哪里需要完善? 请反馈。"
+            _log_info "https://github.com/LeoJyenn/Hysteria2/issues。"
         else
             _log_error "移除管理脚本 ${installed_script_path} 失败。请检查权限或手动删除: sudo rm -f ${installed_script_path}"
         fi
         echo "---"
     fi
 
-    _log_success "所有卸载流程执行完毕。"
 }
 
 
