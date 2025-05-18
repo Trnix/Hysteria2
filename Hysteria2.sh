@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.6.8" # Incremented version
+SCRIPT_VERSION="1.6.7" # Incremented version
 SCRIPT_DATE="2025-05-18"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
@@ -411,6 +411,54 @@ _get_ip_geolocation_remark() {
 }
 
 # --- Generic Service Control ---
+_check_service_status() {
+    local service_type="$1"
+    local current_service_name_val=""
+    local service_cmd_val=""
+    local log_out_val=""
+    local log_err_val=""
+
+    if [[ "$service_type" == "hysteria" ]]; then
+        current_service_name_val="$HYSTERIA_SERVICE_NAME_SYSTEMD"
+        log_out_val="$LOG_FILE_HYSTERIA_OUT"
+        log_err_val="$LOG_FILE_HYSTERIA_ERR"
+    elif [[ "$service_type" == "mtg" ]]; then
+        current_service_name_val="$MTG_SERVICE_NAME_SYSTEMD"
+        log_out_val="$LOG_FILE_MTG_OUT"
+        log_err_val="$LOG_FILE_MTG_ERR"
+    else
+        _log_error "未知服务类型: $service_type"
+        return 1
+    fi
+
+    if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+        service_cmd_val="$SERVICE_CMD_SYSTEMCTL"
+        local status_output
+        status_output=$($service_cmd_val is-active "$current_service_name_val" 2>/dev/null)
+        if [[ "$status_output" == "active" ]]; then
+            echo -e "${GREEN}✓ ${service_type^} 服务正在运行${NC}"
+            return 0
+        else
+            echo -e "${RED}✗ ${service_type^} 服务未运行${NC}"
+            return 1
+        fi
+    elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
+        service_cmd_val="$SERVICE_CMD_OPENRC"
+        local status_output
+        status_output=$($service_cmd_val "$current_service_name_val" status 2>/dev/null)
+        if echo "$status_output" | grep -q "started"; then
+            echo -e "${GREEN}✓ ${service_type^} 服务正在运行${NC}"
+            return 0
+        else
+            echo -e "${RED}✗ ${service_type^} 服务未运行${NC}"
+            return 1
+        fi
+    else
+        _log_error "不支持的初始化系统: $INIT_SYSTEM"
+        return 1
+    fi
+}
+
 _generic_control_service() {
     local service_type="$1"
     local action="$2"
@@ -502,8 +550,7 @@ _generic_control_service() {
         if [ $cmd_exit_code -eq 0 ]; then
             _log_success "操作 '$action' (${service_type^}) 成功。"
             sleep 1
-            _log_info "当前服务状态:"
-            _generic_control_service "$service_type" "status"
+            _check_service_status "$service_type"
         else
             _log_error "操作 '$action' (${service_type^}) 失败。输出:"
             if [[ "$action" == "stop" && ("$service_type" == "hysteria" || "$service_type" == "mtg") ]]; then
@@ -524,15 +571,7 @@ _generic_control_service() {
         fi
         ;;
     status)
-        _log_info "${service_type^} 服务状态 ($current_service_name_val):"
-        if [[ "$INIT_SYSTEM" == "systemd" ]]; then
-            cmd_to_run="$service_cmd_val $action $current_service_name_val"
-        elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
-            cmd_to_run="$service_cmd_val $current_service_name_val $action"
-        else
-            return 1
-        fi
-        eval "$cmd_to_run"
+        _check_service_status "$service_type"
         return $?
         ;;
     enable)
@@ -1324,8 +1363,8 @@ _generate_mtg_config() {
     _log_info "开始配置 MTProto 代理..."
     mkdir -p "$MTG_CONFIG_DIR"
     local mtg_port mtg_domain mtg_secret
-    _read_from_tty mtg_port "请输入 MTProto 代理监听端口" "8443"
-    mtg_port=${mtg_port:-8443}
+    _read_from_tty mtg_port "请输入 MTProto 代理监听端口" "45678"
+    mtg_port=${mtg_port:-45678}
     _read_from_tty mtg_domain "请输入用于生成FakeTLS密钥的伪装域名 (建议常用可访问域名)" "cn.bing.com"
     mtg_domain=${mtg_domain:-"cn.bing.com"}
     if ! command -v "$MTG_INSTALL_PATH" &>/dev/null; then
