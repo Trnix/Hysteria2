@@ -3,8 +3,8 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.6.3" # Incremented version
-SCRIPT_DATE="2025-05-18" # Retained original date, can be updated if preferred
+SCRIPT_VERSION="1.6.4" # Incremented version
+SCRIPT_DATE="2025-05-18"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
 
@@ -28,7 +28,7 @@ MTG_SERVICE_NAME_SYSTEMD="mtg.service"
 MTG_SERVICE_NAME_OPENRC="mtg"
 LOG_FILE_MTG_OUT="/var/log/mtg.log"
 LOG_FILE_MTG_ERR="/var/log/mtg.error.log"
-MTG_TARGET_VERSION="2.1.7" # Target version for mtg from 9seconds/mtg
+MTG_TARGET_VERSION="2.1.7"
 
 # --- Color Definitions ---
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BLUE='\033[0;34m'; NC='\033[0m'
@@ -39,14 +39,14 @@ INIT_SYSTEM=""; SERVICE_CMD_SYSTEMCTL="systemctl"; SERVICE_CMD_OPENRC="rc-servic
 ENABLE_CMD_PREFIX=""; ENABLE_CMD_SUFFIX=""
 SETCAP_DEPENDENCY_PKG=""; REQUIRED_PKGS_OS_SPECIFIC="";
 QRENCODE_PACKAGE_NAME=""
-MTG_LINK_VAR="" # Global variable to store parsed MTG link
+MTG_LINK_VAR=""
 
 # --- Utility Functions ---
 _log_error() { echo -e "${RED}错误: $1${NC}" >&2; }
 _log_success() { echo -e "${GREEN}$1${NC}" >&2; }
 _log_warning() { echo -e "${YELLOW}警告: $1${NC}" >&2; }
 _log_info() { echo -e "${BLUE}信息: $1${NC}" >&2; }
-_log_debug() { :; } # Was _log_info, now mostly silent for non-essential info
+_log_debug() { :; }
 
 _ensure_root() { if [ "$(id -u)" -ne 0 ]; then _log_error "此操作需 root 权限。请用 sudo。"; exit 1; fi; }
 _read_from_tty() { local var_name="$1"; local prompt_str="$2"; local default_val_display="$3"; local actual_prompt="${BLUE}${prompt_str}${NC}"; if [ -n "$default_val_display" ]; then actual_prompt="${BLUE}${prompt_str} (当前: ${default_val_display:-未设置}, 回车不改): ${NC}"; if [[ "$prompt_str" == *"密码"* && -n "$default_val_display" ]]; then actual_prompt="${BLUE}${prompt_str} (当前: ******, 回车不改, 输入'random'生成): ${NC}"; elif [[ "$prompt_str" == *"密码"* ]]; then actual_prompt="${BLUE}${prompt_str} (回车随机, 输入'random'生成): ${NC}"; fi; fi; echo -n -e "$actual_prompt"; read "$var_name" </dev/tty; }
@@ -74,7 +74,7 @@ _detect_os() {
         if [[ "$DISTRO_FAMILY" == "debian" ]]; then
             export DEBIAN_FRONTEND=noninteractive; PKG_INSTALL_CMD="apt-get install -y -q"; PKG_UPDATE_CMD="apt-get update -q"; PKG_REMOVE_CMD="apt-get remove -y -q";
             SETCAP_DEPENDENCY_PKG="libcap2-bin";
-        else # RHEL family
+        else
             PKG_INSTALL_CMD="dnf install -y -q"; PKG_UPDATE_CMD="dnf makecache -y -q"; PKG_REMOVE_CMD="dnf remove -y -q";
             if ! command -v dnf &>/dev/null && command -v yum &>/dev/null; then
                 PKG_INSTALL_CMD="yum install -y -q"; PKG_UPDATE_CMD="yum makecache -y -q"; PKG_REMOVE_CMD="yum remove -y -q";
@@ -91,12 +91,11 @@ _detect_os() {
 }
 
 _install_dependencies() {
-    _log_info "更新包列表 (${DISTRO_FAMILY})..."; # Keep this as it's a distinct step
+    _log_info "更新包列表 (${DISTRO_FAMILY})...";
     if ! $PKG_UPDATE_CMD >/dev/null; then
         _log_error "更新包列表 (${PKG_UPDATE_CMD}) 失败。请检查上面可能显示的错误信息，以及您的网络和软件源配置。"
         exit 1
     fi
-    # _log_success "包列表更新成功。" # Reduced verbosity
     _log_debug "检查并安装依赖包..."
     REQUIRED_PKGS_COMMON="wget curl git openssl lsof coreutils"
     REQUIRED_PKGS="$REQUIRED_PKGS_COMMON"
@@ -126,7 +125,7 @@ _install_dependencies() {
     done
 
     if [ ${#missing_pkgs_arr[@]} -gt 0 ]; then
-        _log_info "下列依赖包需要安装: ${missing_pkgs_arr[*]}" # Keep this, it's important
+        _log_info "下列依赖包需要安装: ${missing_pkgs_arr[*]}"
         if [[ "$DISTRO_FAMILY" == "rhel" ]]; then
             _log_debug "正在尝试一次性安装所有 RHEL 缺失依赖..."
             if ! $PKG_INSTALL_CMD "${missing_pkgs_arr[@]}" >/dev/null; then
@@ -340,7 +339,42 @@ EOF
     sleep 2; if _generic_control_service "hysteria" "status" > /dev/null; then _log_success "Hysteria服务已成功运行！"; else _log_error "Hysteria服务状态异常!"; fi
     _setup_hy_command; _log_success "Hysteria 安装配置完成！"; echo "------------------------------------------------------------------------"; _show_hysteria_info_and_qrcode; echo "------------------------------------------------------------------------"; _show_management_commands_hint
 }
-_do_uninstall_hysteria() { _ensure_root; _detect_os; if ! _is_hysteria_installed; then _log_warning "Hysteria 未安装或未完全安装。"; return 0; fi; _read_confirm_tty confirm_uninstall "这将卸载 Hysteria 并删除所有相关配置和文件。确定? [y/N]: "; if [[ "$confirm_uninstall" != "y" && "$confirm_uninstall" != "Y" ]]; then _log_info "Hysteria 卸载取消。"; exit 0; fi; _log_info "停止Hysteria服务..."; _generic_control_service "hysteria" "stop" >/dev/null 2>&1; local current_service_name_val=""; if [[ "$INIT_SYSTEM" == "systemd" ]]; then current_service_name_val="$HYSTERIA_SERVICE_NAME_SYSTEMD"; _log_info "禁用 Hysteria systemd服务..."; "$SERVICE_CMD_SYSTEMCTL" disable "$current_service_name_val" >/dev/null 2>&1; _log_info "移除 Hysteria systemd服务文件..."; rm -f "/etc/systemd/system/$current_service_name_val"; find /etc/systemd/system/ -name "$current_service_name_val" -delete; "$SERVICE_CMD_SYSTEMCTL" daemon-reload; "$SERVICE_CMD_SYSTEMCTL" reset-failed "$current_service_name_val" >/dev/null 2>&1 || true; elif [[ "$INIT_SYSTEM" == "openrc" ]]; then current_service_name_val="$HYSTERIA_SERVICE_NAME_OPENRC"; _log_info "移除 Hysteria OpenRC服务..."; rc-update del "$current_service_name_val" default >/dev/null 2>&1; _log_info "移除 Hysteria OpenRC脚本..."; rm -f "/etc/init.d/$current_service_name_val"; fi; _log_info "移除Hysteria二进制: $HYSTERIA_INSTALL_PATH"; rm -f "$HYSTERIA_INSTALL_PATH"; _log_info "移除Hysteria配置: $HYSTERIA_CONFIG_DIR"; rm -rf "$HYSTERIA_CONFIG_DIR"; _log_info "移除Hysteria日志: $LOG_FILE_HYSTERIA_OUT, $LOG_FILE_HYSTERIA_ERR"; rm -f "$LOG_FILE_HYSTERIA_OUT" "$LOG_FILE_HYSTERIA_ERR"; _log_info "移除 Hysteria 旧版变量文件 (如果存在): $HYSTERIA_INSTALL_VARS_FILE"; rm -f "$HYSTERIA_INSTALL_VARS_FILE"; _log_success "Hysteria 卸载完成。"; }
+
+_do_uninstall_hysteria() {
+    local skip_confirm_flag="$1" # Parameter to skip internal confirmation
+    _ensure_root; _detect_os;
+    if ! _is_hysteria_installed; then
+        _log_info "Hysteria 未安装或未完全安装。跳过 Hysteria 卸载。"
+        return 0
+    fi
+
+    if [[ "$skip_confirm_flag" != "skip_confirm" ]]; then
+        _read_confirm_tty confirm_uninstall "这将卸载 Hysteria 并删除所有相关配置和文件。确定? [y/N]: "
+        if [[ "$confirm_uninstall" != "y" && "$confirm_uninstall" != "Y" ]]; then
+            _log_info "Hysteria 卸载取消。"
+            exit 0 # Exit if this function is called directly and user cancels
+        fi
+    fi
+    _log_info "正在卸载 Hysteria..."
+    _log_info "停止Hysteria服务..."; _generic_control_service "hysteria" "stop" >/dev/null 2>&1;
+    local current_service_name_val="";
+    if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+        current_service_name_val="$HYSTERIA_SERVICE_NAME_SYSTEMD"
+        _log_debug "禁用 Hysteria systemd服务..."; "$SERVICE_CMD_SYSTEMCTL" disable "$current_service_name_val" >/dev/null 2>&1;
+        _log_debug "移除 Hysteria systemd服务文件..."; rm -f "/etc/systemd/system/$current_service_name_val"; find /etc/systemd/system/ -name "$current_service_name_val" -delete;
+        "$SERVICE_CMD_SYSTEMCTL" daemon-reload; "$SERVICE_CMD_SYSTEMCTL" reset-failed "$current_service_name_val" >/dev/null 2>&1 || true;
+    elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
+        current_service_name_val="$HYSTERIA_SERVICE_NAME_OPENRC"
+        _log_debug "移除 Hysteria OpenRC服务..."; rc-update del "$current_service_name_val" default >/dev/null 2>&1;
+        _log_debug "移除 Hysteria OpenRC脚本..."; rm -f "/etc/init.d/$current_service_name_val";
+    fi;
+    _log_debug "移除Hysteria二进制: $HYSTERIA_INSTALL_PATH"; rm -f "$HYSTERIA_INSTALL_PATH";
+    _log_debug "移除Hysteria配置: $HYSTERIA_CONFIG_DIR"; rm -rf "$HYSTERIA_CONFIG_DIR";
+    _log_debug "移除Hysteria日志: $LOG_FILE_HYSTERIA_OUT, $LOG_FILE_HYSTERIA_ERR"; rm -f "$LOG_FILE_HYSTERIA_OUT" "$LOG_FILE_HYSTERIA_ERR";
+    _log_debug "移除 Hysteria 旧版变量文件 (如果存在): $HYSTERIA_INSTALL_VARS_FILE"; rm -f "$HYSTERIA_INSTALL_VARS_FILE";
+    _log_success "Hysteria 卸载完成。"
+}
+
 _show_hysteria_config() { _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria未安装。无配置显示。"; return 1; fi; _log_info "当前Hysteria配置文件($HYSTERIA_CONFIG_FILE):"; echo "----------------------------------------------------"; if [ -f "$HYSTERIA_CONFIG_FILE" ]; then cat "$HYSTERIA_CONFIG_FILE"; else _log_error "配置文件不存在。"; fi; echo "----------------------------------------------------"; _log_info "Hysteria 配置摘要:"; local port=$(grep -E '^\s*listen:\s*:([0-9]+)' "$HYSTERIA_CONFIG_FILE" | sed -E 's/^\s*listen:\s*://' || echo "未知"); local password=$(grep 'password:' "$HYSTERIA_CONFIG_FILE" | head -n 1 | sed -e 's/^.*password:[[:space:]]*//' -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/["'\'']//g' || echo "未知"); local masquerade_url=$(grep '^\s*masquerade:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*url: \([^, }]*\).*/\1/p' || echo "未知"); if [ -z "$masquerade_url" ]; then masquerade_url=$(awk '/^\s*masquerade:/,/url:/{if(/url:/) print $2}' "$HYSTERIA_CONFIG_FILE" || echo "未知"); fi; echo "  监听端口: $port"; echo "  密码: $password"; echo "  伪装URL: $masquerade_url"; if grep -q '^\s*tls:' "$HYSTERIA_CONFIG_FILE"; then local cert_path=$(grep '^\s*tls:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*cert: \([^, }]*\).*/\1/p' || echo "未知"); local key_path=$(grep '^\s*tls:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*key: \([^ }]*\).*/\1/p' || echo "未知"); echo "  TLS模式: 自定义证书"; echo "    证书路径: $cert_path"; echo "    私钥路径: $key_path"; elif grep -q '^\s*acme:' "$HYSTERIA_CONFIG_FILE"; then local domain=$(grep -A 1 '^\s*domains:' "$HYSTERIA_CONFIG_FILE" | grep '^\s*-\s*' | sed -e 's/^\s*-\s*//' -e 's/#.*//' -e 's/[ \t]*$//' -e 's/^["'\'']//' -e 's/["'\'']$//'); local email=$(grep -A 2 '^\s*acme:' "$HYSTERIA_CONFIG_FILE" | grep 'email:' | sed -e 's/^\s*email:\s*//' -e 's/#.*//' -e 's/[[:space:]]*$//'); echo "  TLS模式: ACME"; echo "    域名: $domain"; echo "    邮箱: $email"; else echo "  TLS模式: 未知"; fi; echo "----------------------------------------------------"; }
 _change_hysteria_config_interactive() { _ensure_root; _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria未安装。无法更改。"; return 1; fi; _log_info "更改Hysteria配置(部分)"; _log_warning "此功能通过awk/sed修改配置,复杂情况可能不健壮。"; _log_warning "强烈建议备份$HYSTERIA_CONFIG_FILE。"; _log_warning "当前支持:监听端口,密码,伪装URL。"; _log_warning "如需更改TLS模式等重大配置, 请使用 'sudo ${SCRIPT_COMMAND_NAME} install' 命令。"; CURRENT_PORT=$(grep -E '^\s*listen:\s*:([0-9]+)' "$HYSTERIA_CONFIG_FILE" | sed -E 's/^\s*listen:\s*://' || echo ""); CURRENT_PASSWORD_RAW=$(grep 'password:' "$HYSTERIA_CONFIG_FILE" | head -n 1 | sed -e 's/^.*password:[[:space:]]*//' -e 's/#.*//' -e 's/[[:space:]]*$//' -e 's/["'\'']//g' || echo ""); CURRENT_MASQUERADE=$(grep '^\s*masquerade:' "$HYSTERIA_CONFIG_FILE" | sed -n 's/.*url: \([^, }]*\).*/\1/p' || echo ""); if [ -z "$CURRENT_MASQUERADE" ]; then CURRENT_MASQUERADE=$(awk '/^\s*masquerade:/,/url:/{if(/url:/) print $2}' "$HYSTERIA_CONFIG_FILE" || echo ""); fi; _read_from_tty NEW_PORT "新监听端口" "$CURRENT_PORT"; NEW_PORT=${NEW_PORT:-$CURRENT_PORT}; _read_from_tty NEW_PASSWORD_INPUT "新密码" "$CURRENT_PASSWORD_RAW"; NEW_PASSWORD=""; if [ -n "$NEW_PASSWORD_INPUT" ]; then if [ "$NEW_PASSWORD_INPUT" == "random" ]; then NEW_PASSWORD=$(_generate_uuid); _log_info "生成新随机密码:$NEW_PASSWORD"; else NEW_PASSWORD="$NEW_PASSWORD_INPUT"; fi; else NEW_PASSWORD="$CURRENT_PASSWORD_RAW"; fi; _read_from_tty NEW_MASQUERADE_URL_INPUT "新伪装URL" "$CURRENT_MASQUERADE"; NEW_MASQUERADE=${NEW_MASQUERADE_URL_INPUT:-$CURRENT_MASQUERADE}; local config_changed=false; if [ "$NEW_PORT" != "$CURRENT_PORT" ] || [ "$NEW_PASSWORD" != "$CURRENT_PASSWORD_RAW" ] || [ "$NEW_MASQUERADE" != "$CURRENT_MASQUERADE" ]; then CONFIG_BACKUP_FILE="${HYSTERIA_CONFIG_FILE}.bak.$(date +%s)"; cp "$HYSTERIA_CONFIG_FILE" "$CONFIG_BACKUP_FILE"; _log_info "配置文件备份至$CONFIG_BACKUP_FILE"; config_changed=true; fi; temp_config_file=$(mktemp); if [ "$NEW_PORT" != "$CURRENT_PORT" ]; then _log_info "更改端口 '$CURRENT_PORT' -> '$NEW_PORT'..."; sed "s/^listen: :${CURRENT_PORT}/listen: :${NEW_PORT}/" "$HYSTERIA_CONFIG_FILE" > "$temp_config_file" && mv "$temp_config_file" "$HYSTERIA_CONFIG_FILE" || { _log_error "更改端口失败"; cat "$CONFIG_BACKUP_FILE" > "$HYSTERIA_CONFIG_FILE"; rm -f "$temp_config_file" "$CONFIG_BACKUP_FILE"; return 1; }; fi; if [ "$NEW_PASSWORD" != "$CURRENT_PASSWORD_RAW" ]; then _log_info "更改密码..."; awk -v new_pass="$NEW_PASSWORD" 'BEGIN{pb=0} /^auth:/{pb=1;print;next} pb&&/password:/{print "  password: " new_pass;pb=0;next} pb&&NF>0&&!/^[[:space:]]/{pb=0} {print}' "$HYSTERIA_CONFIG_FILE" > "$temp_config_file" && mv "$temp_config_file" "$HYSTERIA_CONFIG_FILE" || { _log_error "更改密码失败"; cat "$CONFIG_BACKUP_FILE" > "$HYSTERIA_CONFIG_FILE"; rm -f "$temp_config_file" "$CONFIG_BACKUP_FILE"; return 1; }; fi; if [ "$NEW_MASQUERADE" != "$CURRENT_MASQUERADE" ]; then _log_info "更改伪装URL '$CURRENT_MASQUERADE' -> '$NEW_MASQUERADE'..."; awk -v new_url="$NEW_MASQUERADE" 'BEGIN{mb=0} /^masquerade:/{mb=1;print;next} mb&&/url:/{print "    url: " new_url;mb=0;next} mb&&NF>0&&!/^[[:space:]]/{mb=0} {print}' "$HYSTERIA_CONFIG_FILE" > "$temp_config_file" && mv "$temp_config_file" "$HYSTERIA_CONFIG_FILE" || { _log_error "更改伪装URL失败"; cat "$CONFIG_BACKUP_FILE" > "$HYSTERIA_CONFIG_FILE"; rm -f "$temp_config_file" "$CONFIG_BACKUP_FILE"; return 1; }; fi; if [ -f "$temp_config_file" ]; then rm -f "$temp_config_file"; fi; if $config_changed; then _log_success "配置更新。重启服务以应用更改..."; _generic_control_service "hysteria" "restart"; rm -f "$CONFIG_BACKUP_FILE"; else _log_info "未做配置更改。"; if [ -f "$CONFIG_BACKUP_FILE" ]; then rm -f "$CONFIG_BACKUP_FILE"; fi; fi; echo ""; _log_info "--- 当前 Hysteria 配置的订阅信息 ---"; _show_hysteria_info_and_qrcode; echo "------------------------------------------------------------------------"; }
 _update_hysteria_binary() { _ensure_root; _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。无法更新。"; return 1; fi; _log_info "检查 Hysteria 程序更新..."; VERSION_OUTPUT=$("$HYSTERIA_INSTALL_PATH" version 2>/dev/null); CURRENT_VER_RAW=$(echo "$VERSION_OUTPUT" | grep '^Version:' | awk '{print $2}'); CURRENT_VER=$(echo "$CURRENT_VER_RAW" | sed 's#^v##'); if [ -z "$CURRENT_VER" ] || [ "$CURRENT_VER" == "unknown" ]; then _log_warning "无法获取当前版本 (输出: '$VERSION_OUTPUT')。尝试下载最新。"; CURRENT_VER="unknown"; else _log_info "当前版本: $CURRENT_VER_RAW (规范化为: $CURRENT_VER)"; fi; _log_info "获取最新版本号..."; LATEST_VER_TAG=$(curl -s --connect-timeout 5 "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'); if [ -z "$LATEST_VER_TAG" ]; then _log_warning "无法从 GitHub API 获取版本号。尝试下载标记为 'latest' 的版本。"; LATEST_VER_CLEAN="latest"; else LATEST_VER_CLEAN=$(echo "$LATEST_VER_TAG" | sed -e 's#^app/##' -e 's#^v##'); _log_info "最新版本 Tag: $LATEST_VER_TAG (规范化为: $LATEST_VER_CLEAN)"; if [[ "$CURRENT_VER" == "$LATEST_VER_CLEAN" && "$CURRENT_VER" != "unknown" ]]; then _log_success "当前已是最新版本 ($CURRENT_VER_RAW)。"; return 0; fi; fi; _log_info "下载 Hysteria (目标版本: ${LATEST_VER_CLEAN:-latest}) ..."; ARCH=$(uname -m); case ${ARCH} in x86_64) HYSTERIA_ARCH="amd64";; aarch64) HYSTERIA_ARCH="arm64";; armv7l) HYSTERIA_ARCH="arm";; *) _log_error "不支持架构: ${ARCH}"; return 1;; esac; TMP_HY_DOWNLOAD=$(mktemp); DOWNLOAD_URL="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HYSTERIA_ARCH}"; _log_info "准备停止服务以更新二进制文件..."; _generic_control_service "hysteria" "stop"; sleep 1;  if ! wget -qO "$TMP_HY_DOWNLOAD" "$DOWNLOAD_URL"; then _log_warning "GitHub下载失败,尝试旧地址..."; if ! wget -qO "$TMP_HY_DOWNLOAD" "https://download.hysteria.network/app/latest/hysteria-linux-${HYSTERIA_ARCH}"; then _log_error "下载 Hysteria 失败! (URL: $DOWNLOAD_URL 和备用地址)"; rm -f "$TMP_HY_DOWNLOAD"; _generic_control_service "hysteria" "start" &>/dev/null || true; return 1; fi; fi; if ! file "$TMP_HY_DOWNLOAD" | grep -q "executable"; then _log_error "下载文件非可执行。"; rm -f "$TMP_HY_DOWNLOAD"; _generic_control_service "hysteria" "start" &>/dev/null || true; return 1; fi; chmod +x "$TMP_HY_DOWNLOAD"; DOWNLOADED_VER_OUTPUT=$("$TMP_HY_DOWNLOAD" version 2>/dev/null); DOWNLOADED_VER_RAW=$(echo "$DOWNLOADED_VER_OUTPUT" | grep '^Version:' | awk '{print $2}'); DOWNLOADED_VER=$(echo "$DOWNLOADED_VER_RAW" | sed 's#^v##'); if [[ -n "$DOWNLOADED_VER" && "$DOWNLOADED_VER" == "$CURRENT_VER" && "$CURRENT_VER" != "unknown" ]]; then _log_info "下载版本($DOWNLOADED_VER_RAW)与当前相同。取消更新。"; rm -f "$TMP_HY_DOWNLOAD"; _generic_control_service "hysteria" "start" &>/dev/null || true; return 0; elif [[ -n "$DOWNLOADED_VER" ]]; then _log_info "下载版本为: $DOWNLOADED_VER_RAW (规范化为: $DOWNLOADED_VER)"; else _log_warning "无法获取下载文件版本号 (输出: '$DOWNLOADED_VER_OUTPUT')。"; fi; _log_info "准备替换二进制文件..."; if mv "$TMP_HY_DOWNLOAD" "$HYSTERIA_INSTALL_PATH"; then _log_success "Hysteria已更新至 $DOWNLOADED_VER_RAW (或 latest)。"; if getcap "$HYSTERIA_INSTALL_PATH" 2>/dev/null | grep -q "cap_net_bind_service"; then _log_info "重应用setcap权限..."; if ! setcap 'cap_net_bind_service=+ep' "$HYSTERIA_INSTALL_PATH"; then _log_warning "重应用setcap失败。"; fi; fi; _generic_control_service "hysteria" "start"; return 0; else _log_error "替换二进制文件失败。"; rm -f "$TMP_HY_DOWNLOAD"; _log_info "尝试重启旧服务..."; _generic_control_service "hysteria" "start" &>/dev/null || true; return 1; fi; }
@@ -352,19 +386,14 @@ _get_current_mtg_version() {
         local mtg_version_full
         mtg_version_full=$("$MTG_INSTALL_PATH" --version 2>/dev/null)
         if [ -z "$mtg_version_full" ]; then
-            mtg_version_full=$("$MTG_INSTALL_PATH" -v 2>/dev/null) # Fallback for some versions
+            mtg_version_full=$("$MTG_INSTALL_PATH" -v 2>/dev/null)
         fi
-        # Parse the version number; example output: "2.1.7 (go1.19...)"
-        echo "$mtg_version_full" | awk '{print $1}' | sed 's/[(),]//g' # Get first field, remove parens/commas
+        echo "$mtg_version_full" | awk '{print $1}' | sed 's/[(),]//g'
     else
         echo "unknown"
     fi
 }
 _download_mtg_binary() {
-    # This function downloads and installs the MTG binary.
-    # It's used by both initial install and update.
-    # Parameter $1: expected_version (e.g., "2.1.7")
-    # Parameter $2: force_download (true/false) - if true, downloads even if version matches
     local expected_version="$1"
     local force_download="${2:-false}"
     local arch_mtg ARCH; ARCH=$(uname -m)
@@ -398,7 +427,7 @@ _download_mtg_binary() {
     if ! tar -xzf "$tmp_archive" -C "$tmp_extract_dir"; then _log_error "解压 MTG 归档文件失败: $tmp_archive"; rm -f "$tmp_archive"; rm -rf "$tmp_extract_dir"; return 1; fi
 
     local extracted_binary_path="$tmp_extract_dir/mtg-${expected_version}-linux-${arch_mtg}/mtg";
-    if [ ! -f "$extracted_binary_path" ]; then extracted_binary_path="$tmp_extract_dir/mtg"; fi # Fallback if structure is simpler
+    if [ ! -f "$extracted_binary_path" ]; then extracted_binary_path="$tmp_extract_dir/mtg"; fi
 
     if [ -f "$extracted_binary_path" ]; then
         if ! mv "$extracted_binary_path" "$MTG_INSTALL_PATH"; then _log_error "移动 MTG 二进制文件到 $MTG_INSTALL_PATH 失败。"; rm -f "$tmp_archive"; rm -rf "$tmp_extract_dir"; return 1; fi
@@ -410,7 +439,7 @@ _download_mtg_binary() {
 }
 _update_mtg_binary() {
     _ensure_root; _detect_os
-    if ! _is_mtg_installed && ! [ -f "$MTG_INSTALL_PATH" ]; then # Check if partially installed (binary only)
+    if ! _is_mtg_installed && ! [ -f "$MTG_INSTALL_PATH" ]; then
         _log_error "MTProto (mtg) 未安装。无法更新。"
         _log_info "请先运行 'sudo $SCRIPT_COMMAND_NAME install_mtp' 进行安装。"
         return 1
@@ -425,13 +454,13 @@ _update_mtg_binary() {
         return 0
     fi
 
-    if _is_mtg_installed; then # Only stop/start if fully installed service
+    if _is_mtg_installed; then
       _log_info "准备停止 MTG 服务以更新二进制文件..."
       _generic_control_service "mtg" "stop"
       sleep 1
     fi
 
-    if _download_mtg_binary "$MTG_TARGET_VERSION" "true"; then # true to force download attempt
+    if _download_mtg_binary "$MTG_TARGET_VERSION" "true"; then
         _log_success "MTG 程序已更新至版本 $MTG_TARGET_VERSION。"
         if _is_mtg_installed; then
             _log_info "正在启动 MTG 服务..."
@@ -507,7 +536,7 @@ EOF
     _log_success "MTProto 服务文件创建成功。"
 }
 _get_mtg_link_info() {
-    MTG_LINK_VAR="" # Reset global var used by display function
+    MTG_LINK_VAR=""
     if [ ! -f "$MTG_CONFIG_FILE" ]; then _log_error "MTG 配置文件 $MTG_CONFIG_FILE 未找到。"; return 1; fi
     if ! command -v "$MTG_INSTALL_PATH" &>/dev/null; then _log_error "MTG 程序 $MTG_INSTALL_PATH 未找到。"; return 1; fi
     _log_debug "正在从 $MTG_CONFIG_FILE 和 MTG 程序获取连接信息..."; local mtg_access_json
@@ -564,7 +593,7 @@ _do_install_mtp() {
     else _log_info "准备首次安装 MTProto 代理 (mtg)..."; fi
     _log_info "--- 开始 MTProto (mtg) 依赖和程序安装 ---"
     _install_dependencies
-    if ! _download_mtg_binary "$MTG_TARGET_VERSION" "true"; then _log_error "MTG 二进制文件下载失败。中止安装。"; return 1; fi # True for force_download on initial install
+    if ! _download_mtg_binary "$MTG_TARGET_VERSION" "true"; then _log_error "MTG 二进制文件下载失败。中止安装。"; return 1; fi
     if ! _generate_mtg_config; then _log_error "MTG 配置文件生成失败。中止安装。"; return 1; fi
     if ! _create_mtg_service_file; then _log_error "MTG 服务文件创建失败。中止安装。"; return 1; fi
     _log_info "--- MTProto (mtg) 安装阶段结束 ---"
@@ -572,25 +601,84 @@ _do_install_mtp() {
     sleep 2; if _generic_control_service "mtg" "status" > /dev/null; then _log_success "MTProto 代理 (mtg) 服务已成功运行！"; else _log_error "MTProto 代理 (mtg) 服务状态异常!"; fi
     _log_success "MTProto 代理 (mtg) 安装配置完成！"; echo "------------------------------------------------------------------------"; _show_mtg_info_and_qrcode; echo "------------------------------------------------------------------------"; _show_management_commands_hint
 }
+
 _do_uninstall_mtp() {
+    local skip_confirm_flag="$1" # Parameter to skip internal confirmation
     _ensure_root; _detect_os
-    if ! _is_mtg_installed; then _log_warning "MTProto 代理 (mtg) 未安装或未完全安装。"; return 0; fi
-    _read_confirm_tty confirm_uninstall "这将卸载 MTProto 代理 (mtg) 并删除所有相关配置。确定? [y/N]: "; if [[ "$confirm_uninstall" != "y" && "$confirm_uninstall" != "Y" ]]; then _log_info "MTG 卸载取消。"; exit 0; fi
+    if ! _is_mtg_installed; then
+        _log_info "MTProto 代理 (mtg) 未安装或未完全安装。跳过 MTG 卸载。"
+        return 0
+    fi
+
+    if [[ "$skip_confirm_flag" != "skip_confirm" ]]; then
+        _read_confirm_tty confirm_uninstall "这将卸载 MTProto 代理 (mtg) 并删除所有相关配置。确定? [y/N]: "
+        if [[ "$confirm_uninstall" != "y" && "$confirm_uninstall" != "Y" ]]; then
+            _log_info "MTG 卸载取消。"
+            exit 0 # Exit if this function is called directly and user cancels
+        fi
+    fi
+    _log_info "正在卸载 MTProto (mtg)..."
     _log_info "停止 MTProto (mtg) 服务..."; _generic_control_service "mtg" "stop" >/dev/null 2>&1;
-    _log_info "禁用 MTProto (mtg) 服务..."; _generic_control_service "mtg" "disable" >/dev/null 2>&1;
+    _log_debug "禁用 MTProto (mtg) 服务..."; _generic_control_service "mtg" "disable" >/dev/null 2>&1; # Changed to debug
     local current_service_name_val=""
-    if [[ "$INIT_SYSTEM" == "systemd" ]]; then current_service_name_val="$MTG_SERVICE_NAME_SYSTEMD"; _log_info "移除 MTG systemd 服务文件: $current_service_name_val"; rm -f "/etc/systemd/system/$current_service_name_val"; find "/etc/systemd/system/" -name "$current_service_name_val" -delete; $SERVICE_CMD_SYSTEMCTL daemon-reload; $SERVICE_CMD_SYSTEMCTL reset-failed "$current_service_name_val" >/dev/null 2>&1 || true
-    elif [[ "$INIT_SYSTEM" == "openrc" ]]; then current_service_name_val="$MTG_SERVICE_NAME_OPENRC"; _log_info "移除 MTG OpenRC 服务脚本: $current_service_name_val"; rm -f "/etc/init.d/$current_service_name_val"; fi
-    _log_info "移除 MTProto (mtg) 二进制文件: $MTG_INSTALL_PATH"; rm -f "$MTG_INSTALL_PATH"
-    _log_info "移除 MTProto (mtg) 配置目录: $MTG_CONFIG_DIR"; rm -rf "$MTG_CONFIG_DIR"
-    _log_info "移除 MTProto (mtg) 日志文件: $LOG_FILE_MTG_OUT, $LOG_FILE_MTG_ERR"; rm -f "$LOG_FILE_MTG_OUT" "$LOG_FILE_MTG_ERR"
+    if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+        current_service_name_val="$MTG_SERVICE_NAME_SYSTEMD"; _log_debug "移除 MTG systemd 服务文件: $current_service_name_val";
+        rm -f "/etc/systemd/system/$current_service_name_val"; find "/etc/systemd/system/" -name "$current_service_name_val" -delete;
+        $SERVICE_CMD_SYSTEMCTL daemon-reload; $SERVICE_CMD_SYSTEMCTL reset-failed "$current_service_name_val" >/dev/null 2>&1 || true
+    elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
+        current_service_name_val="$MTG_SERVICE_NAME_OPENRC"; _log_debug "移除 MTG OpenRC 服务脚本: $current_service_name_val";
+        rm -f "/etc/init.d/$current_service_name_val";
+    fi
+    _log_debug "移除 MTProto (mtg) 二进制文件: $MTG_INSTALL_PATH"; rm -f "$MTG_INSTALL_PATH"
+    _log_debug "移除 MTProto (mtg) 配置目录: $MTG_CONFIG_DIR"; rm -rf "$MTG_CONFIG_DIR"
+    _log_debug "移除 MTProto (mtg) 日志文件: $LOG_FILE_MTG_OUT, $LOG_FILE_MTG_ERR"; rm -f "$LOG_FILE_MTG_OUT" "$LOG_FILE_MTG_ERR"
     _log_success "MTProto (mtg) 卸载完成。"
 }
+
+_do_uninstall_all() {
+    _ensure_root
+    _detect_os
+
+    local hysteria_is_installed=false
+    local mtg_is_installed=false
+    if _is_hysteria_installed; then hysteria_is_installed=true; fi
+    if _is_mtg_installed; then mtg_is_installed=true; fi
+
+    if ! $hysteria_is_installed && ! $mtg_is_installed; then
+        _log_info "Hysteria 和 MTProto 均未安装。无需卸载。"
+        return 0
+    fi
+
+    local services_to_uninstall=""
+    if $hysteria_is_installed; then services_to_uninstall="Hysteria"; fi
+    if $mtg_is_installed; then
+        if [ -n "$services_to_uninstall" ]; then services_to_uninstall="${services_to_uninstall} 和 MTProto"; else services_to_uninstall="MTProto"; fi
+    fi
+
+    _log_warning "此操作将尝试卸载 ${services_to_uninstall} 及其所有相关配置和文件。"
+    _read_confirm_tty confirm_all "确定要继续吗? [y/N]: "
+    if [[ "$confirm_all" != "y" && "$confirm_all" != "Y" ]]; then
+        _log_info "卸载操作已取消。"
+        exit 0
+    fi
+
+    if $hysteria_is_installed; then
+        _do_uninstall_hysteria "skip_confirm" # Pass flag to skip internal confirmation
+        echo "---"
+    fi
+
+    if $mtg_is_installed; then
+        _do_uninstall_mtp "skip_confirm" # Pass flag to skip internal confirmation
+        echo "---"
+    fi
+    _log_success "所有选定服务的卸载流程执行完毕。"
+}
+
 _edit_mtg_config() {
     _ensure_root; _detect_os; if ! _is_mtg_installed; then _log_error "MTProto (mtg) 未安装."; exit 1; fi;
     if [ -z "$EDITOR" ]; then EDITOR="vi"; fi
     _log_info "使用 $EDITOR 打开 MTProto (mtg) 配置文件 $MTG_CONFIG_FILE ...";
-    if $EDITOR "$MTG_CONFIG_FILE"; then _log_info "编辑完成。请使用 'sudo $SCRIPT_COMMAND_NAME restart_mtp' 重启服务以应用更改。";
+    if $EDITOR "$MTG_CONFIG_FILE"; then _log_info "编辑完成。请使用 'sudo $SCRIPT_COMMAND_NAME restart_mtp' 或 'sudo $SCRIPT_COMMAND_NAME re_mtp' 重启服务以应用更改。";
     else _log_error "编辑器 '$EDITOR' 返回错误。"; fi
 }
 
@@ -604,7 +692,7 @@ _do_update() {
       if _update_hysteria_binary; then hy_program_update_ok=true; fi
     else
       _log_info "Hysteria 未安装, 跳过 Hysteria 程序更新。"
-      hy_program_update_ok=true # Consider it "ok" as there's nothing to update
+      hy_program_update_ok=true
     fi
     echo "---";
 
@@ -612,7 +700,7 @@ _do_update() {
       if _update_mtg_binary; then mtg_program_update_ok=true; fi
     else
       _log_info "MTProto (mtg) 未安装, 跳过 MTG 程序更新。"
-      mtg_program_update_ok=true # Consider it "ok"
+      mtg_program_update_ok=true
     fi
     echo "---";
 
@@ -631,98 +719,119 @@ _do_update() {
     return 0
 }
 
-
 _show_menu() {
     echo ""; _log_info "${SCRIPT_COMMAND_NAME} 管理面板 (v$SCRIPT_VERSION - $SCRIPT_DATE)"
     echo "--------------------------------------------"
     echo -e "${YELLOW}Hysteria 2 管理:${NC}"
-    echo "  install         - 安装或重装 Hysteria 2"
-    echo "  uninstall       - 卸载 Hysteria 2"
-    echo "  start           - 启动 Hysteria 服务"; echo "  stop            - 停止 Hysteria 服务"
-    echo "  restart         - 重启 Hysteria 服务"; echo "  status          - 查看 Hysteria 服务状态"
-    echo "  enable          - 设置 Hysteria 开机自启"; echo "  disable         - 禁止 Hysteria 开机自启"
-    echo "  info            - 显示 Hysteria 订阅链接和二维码"
-    echo "  config          - 显示 Hysteria 配置摘要"
-    echo "  config_edit     - 手动编辑 Hysteria 配置文件"
-    echo "  config_change   - 交互修改 Hysteria 部分配置"
-    echo "  logs            - 查看 Hysteria 输出日志"; echo "  logs_err        - 查看 Hysteria 错误日志"
+    echo "  install (i)         - 安装或重装 Hysteria 2"
+  # echo "  uninstall_hy      - (旧) 仅卸载 Hysteria 2" # Kept for reference, can be removed
+    echo "  start (run)         - 启动 Hysteria 服务"; echo "  stop (sp)           - 停止 Hysteria 服务"
+    echo "  restart (re, rs)    - 重启 Hysteria 服务"; echo "  status (st)         - 查看 Hysteria 服务状态"
+    echo "  enable (en)         - 设置 Hysteria 开机自启"; echo "  disable (dis)       - 禁止 Hysteria 开机自启"
+    echo "  info (nfo)          - 显示 Hysteria 订阅链接和二维码"
+    echo "  config (conf)       - 显示 Hysteria 配置摘要"
+    echo "  config_edit (ce)    - 手动编辑 Hysteria 配置文件"
+    echo "  config_change (cc)  - 交互修改 Hysteria 部分配置"
+    echo "  logs (log)          - 查看 Hysteria 输出日志"; echo "  logs_err (loge)     - 查看 Hysteria 错误日志"
     _detect_os
-    if [[ "$INIT_SYSTEM" == "systemd" ]]; then echo "  logs_sys        - 查看 Hysteria systemd 日志"; fi
+    if [[ "$INIT_SYSTEM" == "systemd" ]]; then echo "  logs_sys (logsy)    - 查看 Hysteria systemd 日志"; fi
 
     echo -e "\n${YELLOW}MTProto 代理 (mtg) 管理:${NC}"
-    echo "  install_mtp     - 安装或重装 MTProto 代理"
-    echo "  uninstall_mtp   - 卸载 MTProto 代理"
-    echo "  start_mtp       - 启动 MTProto 服务"; echo "  stop_mtp        - 停止 MTProto 服务"
-    echo "  restart_mtp     - 重启 MTProto 服务"; echo "  status_mtp      - 查看 MTProto 服务状态"
-    echo "  enable_mtp      - 设置 MTProto 开机自启"; echo "  disable_mtp     - 禁止 MTProto 开机自启"
-    echo "  info_mtp        - 显示 MTProto 链接和二维码"
-    echo "  config_mtp_edit - 手动编辑 MTProto 配置文件"
-    echo "  logs_mtp        - 查看 MTProto 输出日志"
-    echo "  logs_err_mtp    - 查看 MTProto 错误日志"
-    if [[ "$INIT_SYSTEM" == "systemd" ]]; then echo "  logs_sys_mtp    - 查看 MTProto systemd 日志"; fi
+    echo "  install_mtp (i_mtp) - 安装或重装 MTProto 代理"
+  # echo "  uninstall_mtp     - (旧) 仅卸载 MTProto 代理" # Kept for reference
+    echo "  start_mtp (run_mtp) - 启动 MTProto 服务"; echo "  stop_mtp (sp_mtp)   - 停止 MTProto 服务"
+    echo "  restart_mtp (re_mtp)- 重启 MTProto 服务"; echo "  status_mtp (st_mtp) - 查看 MTProto 服务状态"
+    echo "  enable_mtp (en_mtp) - 设置 MTProto 开机自启"; echo "  disable_mtp (dis_mtp)- 禁止 MTProto 开机自启"
+    echo "  info_mtp (nfo_mtp)  - 显示 MTProto 链接和二维码"
+    echo "  config_mtp_edit (ce_mtp) - 手动编辑 MTProto 配置文件"
+    echo "  logs_mtp (log_mtp)  - 查看 MTProto 输出日志"
+    echo "  logs_err_mtp (loge_mtp) - 查看 MTProto 错误日志"
+    if [[ "$INIT_SYSTEM" == "systemd" ]]; then echo "  logs_sys_mtp (logsy_mtp) - 查看 MTProto systemd 日志"; fi
 
     echo -e "\n${YELLOW}通用命令:${NC}"
-    echo "  update          - 更新 Hysteria, MTG 程序和此管理脚本"
-    echo "  version         - 显示此脚本及已安装服务的版本"
-    echo "  help            - 显示此帮助菜单"
+    echo "  uninstall (un, u) - 同时卸载 Hysteria 2 和 MTProto"
+    echo "  update (up)       - 更新 Hysteria, MTG 程序和此管理脚本"
+    echo "  version (v)       - 显示此脚本及已安装服务的版本"
+    echo "  help (h)          - 显示此帮助菜单"
     echo "--------------------------------------------"
-    echo "用法: sudo ${SCRIPT_COMMAND_NAME} <命令>"; echo "例如: sudo ${SCRIPT_COMMAND_NAME} install"; echo "      sudo ${SCRIPT_COMMAND_NAME} info_mtp"; echo "      sudo ${SCRIPT_COMMAND_NAME} update"; echo ""
+    echo "用法: sudo ${SCRIPT_COMMAND_NAME} <命令>"; echo "例如: sudo ${SCRIPT_COMMAND_NAME} i"; echo "      sudo ${SCRIPT_COMMAND_NAME} nfo_mtp"; echo "      sudo ${SCRIPT_COMMAND_NAME} up"; echo ""
     _log_info "此脚本在执行 'install' 或 'install_mtp' 时会尝试自动安装为 /usr/local/bin/${SCRIPT_COMMAND_NAME} 命令."
     _log_info "如果自动安装失败或想手动更新(确保URL正确):"; echo "  sudo wget -qO \"/usr/local/bin/${SCRIPT_COMMAND_NAME}\" \"$HY_SCRIPT_URL_ON_GITHUB\" && sudo chmod +x \"/usr/local/bin/${SCRIPT_COMMAND_NAME}\""
     echo ""
 }
-_show_management_commands_hint() { _log_info "您可使用 'sudo ${SCRIPT_COMMAND_NAME} help' 或不带参数运行 'sudo ${SCRIPT_COMMAND_NAME}' 查看管理命令面板。"; }
+_show_management_commands_hint() { _log_info "您可使用 'sudo ${SCRIPT_COMMAND_NAME} help' 或 'sudo ${SCRIPT_COMMAND_NAME} h' 查看管理命令面板。"; }
 
 # --- Main Script Logic ---
-if [[ "$1" != "version" && "$1" != "help" && "$1" != "" && "$1" != "-h" && "$1" != "--help" ]]; then
+if [[ "$1" != "version" && "$1" != "v" && \
+      "$1" != "help" && "$1" != "h" && "$1" != "" && \
+      "$1" != "--help" && "$1" != "-h"  ]]; then
     _detect_os;
 fi
 ACTION="$1"
 case "$ACTION" in
-    install)                _do_install_hysteria ;;
-    uninstall)              _do_uninstall_hysteria ;;
-    start)                  _generic_control_service "hysteria" "start" ;;
-    stop)                   _generic_control_service "hysteria" "stop" ;;
-    restart)                _generic_control_service "hysteria" "restart" ;;
-    status)                 _generic_control_service "hysteria" "status" ;;
-    enable)                 _generic_control_service "hysteria" "enable" ;;
-    disable)                _generic_control_service "hysteria" "disable" ;;
-    info)                   _show_hysteria_info_and_qrcode ;;
-    config)                 _show_hysteria_config ;;
-    config_edit)            _ensure_root; if ! _is_hysteria_installed; then _log_error "Hysteria未安装."; exit 1; fi; if [ -z "$EDITOR" ]; then EDITOR="vi"; fi; _log_info "使用 $EDITOR 打开 Hysteria 配置文件 $HYSTERIA_CONFIG_FILE ..."; if $EDITOR "$HYSTERIA_CONFIG_FILE"; then _log_info "编辑完成。考虑重启服务: sudo $SCRIPT_COMMAND_NAME restart"; else _log_error "编辑器 '$EDITOR' 返回错误。"; fi ;;
-    config_change)          _change_hysteria_config_interactive ;;
-    logs)                   _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [[ "$INIT_SYSTEM" == "openrc" ]] && [ ! -f "$LOG_FILE_HYSTERIA_OUT" ]; then _log_error "Hysteria 日志文件 $LOG_FILE_HYSTERIA_OUT 不存在。"; exit 1; elif [[ "$INIT_SYSTEM" == "systemd" ]] && [ ! -f "$LOG_FILE_HYSTERIA_OUT" ] && ! journalctl -u "$HYSTERIA_SERVICE_NAME_SYSTEMD" -n 1 --no-pager --quiet &>/dev/null; then _log_info "Hysteria Systemd 日志似乎也为空或服务从未成功启动过。"; if [ ! -f "$LOG_FILE_HYSTERIA_OUT" ]; then _log_error "Hysteria 日志文件 $LOG_FILE_HYSTERIA_OUT 也不存在。"; exit 1; fi; fi; _log_info "按 CTRL+C 退出 (Hysteria 日志 $LOG_FILE_HYSTERIA_OUT)。"; tail -f "$LOG_FILE_HYSTERIA_OUT" ;;
-    logs_err)               _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; if [[ "$INIT_SYSTEM" == "openrc" ]] && [ ! -f "$LOG_FILE_HYSTERIA_ERR" ]; then _log_error "Hysteria 错误日志 $LOG_FILE_HYSTERIA_ERR 不存在。"; exit 1; elif [[ "$INIT_SYSTEM" == "systemd" ]] && [ ! -f "$LOG_FILE_HYSTERIA_ERR" ] && ! journalctl -u "$HYSTERIA_SERVICE_NAME_SYSTEMD" -n 1 --no-pager --quiet &>/dev/null; then _log_info "Hysteria Systemd 日志似乎也为空或服务从未成功启动过。"; if [ ! -f "$LOG_FILE_HYSTERIA_ERR" ]; then _log_error "Hysteria 错误日志 $LOG_FILE_HYSTERIA_ERR 也不存在。"; exit 1; fi; fi; _log_info "按 CTRL+C 退出 (Hysteria 错误日志 $LOG_FILE_HYSTERIA_ERR)。"; tail -f "$LOG_FILE_HYSTERIA_ERR" ;;
-    logs_sys)
+    install|i)              _do_install_hysteria ;;
+    uninstall|un|u)         _do_uninstall_all ;; # Changed to universal uninstall
+  # uninstall_hy)           _do_uninstall_hysteria ;; # Kept for reference, can be removed
+    start|run)              _generic_control_service "hysteria" "start" ;;
+    stop|sp)                _generic_control_service "hysteria" "stop" ;;
+    restart|re|rs)          _generic_control_service "hysteria" "restart" ;;
+    status|st)              _generic_control_service "hysteria" "status" ;;
+    enable|en)              _generic_control_service "hysteria" "enable" ;;
+    disable|dis)            _generic_control_service "hysteria" "disable" ;;
+    info|nfo)               _show_hysteria_info_and_qrcode ;;
+    config|conf)            _show_hysteria_config ;;
+    config_edit|ce)
+        _ensure_root; if ! _is_hysteria_installed; then _log_error "Hysteria未安装."; exit 1; fi;
+        if [ -z "$EDITOR" ]; then EDITOR="vi"; fi;
+        _log_info "使用 $EDITOR 打开 Hysteria 配置文件 $HYSTERIA_CONFIG_FILE ...";
+        if $EDITOR "$HYSTERIA_CONFIG_FILE"; then _log_info "编辑完成。考虑重启服务: sudo $SCRIPT_COMMAND_NAME restart (或 re/rs)"; else _log_error "编辑器 '$EDITOR' 返回错误。"; fi ;;
+    config_change|cc)       _change_hysteria_config_interactive ;;
+    logs|log)
+        _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi;
+        if [[ "$INIT_SYSTEM" == "openrc" ]] && [ ! -f "$LOG_FILE_HYSTERIA_OUT" ]; then _log_error "Hysteria 日志文件 $LOG_FILE_HYSTERIA_OUT 不存在。"; exit 1;
+        elif [[ "$INIT_SYSTEM" == "systemd" ]] && [ ! -f "$LOG_FILE_HYSTERIA_OUT" ] && ! journalctl -u "$HYSTERIA_SERVICE_NAME_SYSTEMD" -n 1 --no-pager --quiet &>/dev/null; then
+             _log_info "Hysteria Systemd 日志似乎也为空或服务从未成功启动过。";
+             if [ ! -f "$LOG_FILE_HYSTERIA_OUT" ]; then _log_error "Hysteria 日志文件 $LOG_FILE_HYSTERIA_OUT 也不存在。"; exit 1; fi;
+        fi;
+        _log_info "按 CTRL+C 退出 (Hysteria 日志 $LOG_FILE_HYSTERIA_OUT)。"; tail -f "$LOG_FILE_HYSTERIA_OUT" ;;
+    logs_err|loge)
+        _detect_os; if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi;
+        if [[ "$INIT_SYSTEM" == "openrc" ]] && [ ! -f "$LOG_FILE_HYSTERIA_ERR" ]; then _log_error "Hysteria 错误日志 $LOG_FILE_HYSTERIA_ERR 不存在。"; exit 1;
+        elif [[ "$INIT_SYSTEM" == "systemd" ]] && [ ! -f "$LOG_FILE_HYSTERIA_ERR" ] && ! journalctl -u "$HYSTERIA_SERVICE_NAME_SYSTEMD" -n 1 --no-pager --quiet &>/dev/null; then
+            _log_info "Hysteria Systemd 日志似乎也为空或服务从未成功启动过。";
+            if [ ! -f "$LOG_FILE_HYSTERIA_ERR" ]; then _log_error "Hysteria 错误日志 $LOG_FILE_HYSTERIA_ERR 也不存在。"; exit 1; fi;
+        fi;
+        _log_info "按 CTRL+C 退出 (Hysteria 错误日志 $LOG_FILE_HYSTERIA_ERR)。"; tail -f "$LOG_FILE_HYSTERIA_ERR" ;;
+    logs_sys|logsy)
         _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then if ! _is_hysteria_installed; then _log_error "Hysteria 未安装。"; exit 1; fi; _log_info "按 CTRL+C 退出 (Hysteria systemd 日志)。"; journalctl -u "$HYSTERIA_SERVICE_NAME_SYSTEMD" -f --no-pager;
         else _log_error "此命令仅适用于 systemd 系统上的 Hysteria 服务。"; fi ;;
 
-    install_mtp)            _do_install_mtp ;;
-    uninstall_mtp)          _do_uninstall_mtp ;;
-    start_mtp)              _generic_control_service "mtg" "start" ;;
-    stop_mtp)               _generic_control_service "mtg" "stop" ;;
-    restart_mtp)            _generic_control_service "mtg" "restart" ;;
-    status_mtp)             _generic_control_service "mtg" "status" ;;
-    enable_mtp)             _generic_control_service "mtg" "enable" ;;
-    disable_mtp)            _generic_control_service "mtg" "disable" ;;
-    info_mtp)               _show_mtg_info_and_qrcode ;;
-    config_mtp_edit)        _edit_mtg_config ;;
-    logs_mtp)
+    install_mtp|i_mtp)      _do_install_mtp ;;
+  # uninstall_mtp|u_mtp)    _do_uninstall_mtp ;; # Kept for reference, can be removed. Use universal 'uninstall'
+    start_mtp|run_mtp)      _generic_control_service "mtg" "start" ;;
+    stop_mtp|sp_mtp)        _generic_control_service "mtg" "stop" ;;
+    restart_mtp|re_mtp)     _generic_control_service "mtg" "restart" ;;
+    status_mtp|st_mtp)      _generic_control_service "mtg" "status" ;;
+    enable_mtp|en_mtp)      _generic_control_service "mtg" "enable" ;;
+    disable_mtp|dis_mtp)    _generic_control_service "mtg" "disable" ;;
+    info_mtp|nfo_mtp)       _show_mtg_info_and_qrcode ;;
+    config_mtp_edit|ce_mtp) _edit_mtg_config ;;
+    logs_mtp|log_mtp)
         _detect_os; if ! _is_mtg_installed; then _log_error "MTProto (mtg) 未安装。"; exit 1; fi;
         if [[ "$INIT_SYSTEM" == "openrc" ]]; then if [ ! -f "$LOG_FILE_MTG_OUT" ]; then _log_error "MTG 日志文件 $LOG_FILE_MTG_OUT 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 (MTG 日志 $LOG_FILE_MTG_OUT)。"; tail -f "$LOG_FILE_MTG_OUT";
-        elif [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "对于 systemd 系统, MTG 日志将显示在标准输出/错误日志文件 (如果服务配置了重定向) 或 journald。将尝试显示 systemd 日志。"; "$0" logs_sys_mtp; # $0 calls the script itself
+        elif [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "对于 systemd 系统, MTG 日志通常在 journald。将尝试显示 systemd 日志。"; "$0" logs_sys_mtp;
         else _log_error "未知初始化系统，无法确定MTG日志位置。"; fi ;;
-    logs_err_mtp)
+    logs_err_mtp|loge_mtp)
         _detect_os; if ! _is_mtg_installed; then _log_error "MTProto (mtg) 未安装。"; exit 1; fi;
         if [[ "$INIT_SYSTEM" == "openrc" ]]; then if [ ! -f "$LOG_FILE_MTG_ERR" ]; then _log_error "MTG 错误日志 $LOG_FILE_MTG_ERR 不存在。"; exit 1; fi; _log_info "按 CTRL+C 退出 (MTG 错误日志 $LOG_FILE_MTG_ERR)。"; tail -f "$LOG_FILE_MTG_ERR";
-        elif [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "对于 systemd 系统, MTG 错误日志在标准输出/错误日志文件 (如果服务配置了重定向) 或 journald。将尝试显示 systemd 日志。"; "$0" logs_sys_mtp;
+        elif [[ "$INIT_SYSTEM" == "systemd" ]]; then _log_info "对于 systemd 系统, MTG 错误日志通常在 journald。将尝试显示 systemd 日志。"; "$0" logs_sys_mtp;
         else _log_error "未知初始化系统，无法确定MTG错误日志位置。"; fi ;;
-    logs_sys_mtp)
+    logs_sys_mtp|logsy_mtp)
         _detect_os; if [[ "$INIT_SYSTEM" == "systemd" ]]; then if ! _is_mtg_installed; then _log_error "MTProto (mtg) 未安装。"; exit 1; fi; _log_info "按 CTRL+C 退出 (MTG systemd 日志)。"; journalctl -u "$MTG_SERVICE_NAME_SYSTEMD" -f --no-pager;
         else _log_error "此命令仅适用于 systemd 系统上的 MTProto (mtg) 服务。"; fi ;;
 
-    update)                 _do_update ;;
-    version)
+    update|up)              _do_update ;;
+    version|v)
         echo "$SCRIPT_COMMAND_NAME 管理脚本 v$SCRIPT_VERSION ($SCRIPT_DATE)"; echo "脚本文件: $SCRIPT_FILE_BASENAME"
         if _is_hysteria_installed || _is_mtg_installed; then _detect_os &>/dev/null; fi
 
@@ -730,10 +839,10 @@ case "$ACTION" in
             HY_VERSION_RAW=$("$HYSTERIA_INSTALL_PATH" version 2>/dev/null | grep '^Version:' | awk '{print $2}')
             HY_VERSION=$(echo "$HY_VERSION_RAW" | sed 's#^v##')
             if [ -n "$HY_VERSION" ]; then echo "已安装 Hysteria 版本: $HY_VERSION_RAW (规范化为: $HY_VERSION)"; else _log_warning "无法从 '$HYSTERIA_INSTALL_PATH version' 解析 Hysteria 版本号。"; fi
-        elif _is_hysteria_installed; then # Config exists but binary doesn't
+        elif _is_hysteria_installed; then
              _log_warning "Hysteria 部分安装 (程序文件 $HYSTERIA_INSTALL_PATH 未找到或不可执行)。"
         else
-            _log_debug "Hysteria 未安装。" # Reduced verbosity if simply not installed
+            _log_debug "Hysteria 未安装。"
         fi
 
         if command -v "$MTG_INSTALL_PATH" &>/dev/null; then
@@ -741,18 +850,17 @@ case "$ACTION" in
             if [[ -n "$MTG_VERSION_REPORTED" && "$MTG_VERSION_REPORTED" != "unknown" ]]; then
                 echo "已安装 MTG 版本: $MTG_VERSION_REPORTED (提示: 使用 9seconds/mtg)"
             else
-                # If _get_current_mtg_version failed, try to get raw output for debugging
                 local mtg_raw_ver_output
                 mtg_raw_ver_output=$("$MTG_INSTALL_PATH" --version 2>/dev/null || "$MTG_INSTALL_PATH" -v 2>/dev/null)
                 _log_warning "无法从 '$MTG_INSTALL_PATH -v/--version' 解析 MTG 版本号 (原始输出: '$mtg_raw_ver_output')。"
             fi
-        elif _is_mtg_installed; then # Config exists but binary doesn't
+        elif _is_mtg_installed; then
             _log_warning "MTProto (mtg) 部分安装 (程序文件 $MTG_INSTALL_PATH 未找到或不可执行)。"
         else
-            _log_debug "MTProto (mtg) 未安装。" # Reduced verbosity
+            _log_debug "MTProto (mtg) 未安装。"
         fi
         ;;
-    help|--help|-h|"")      _show_menu ;;
+    help|h|--help|-h|"")   _show_menu ;;
     *)                      _log_error "未知命令: $ACTION"; _show_menu; exit 1 ;;
 esac
 exit 0
