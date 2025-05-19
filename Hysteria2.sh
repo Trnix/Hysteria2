@@ -2229,8 +2229,8 @@ TARGET="${2:-}" # 获取第二个参数作为目标服务类型
 # 处理带空格的服务专用命令 (i hy, i mtp 等)
 if [[ -n "$TARGET" ]]; then
     case "$ACTION $TARGET" in
-    "i hy") _do_install_hysteria ;;
-    "i mtp") _do_install_mtp ;;
+    "i hy" | "install hy") _do_install_hysteria ;;
+    "i mtp" | "install mtp") _do_install_mtp ;;
     "st hy" | "r hy") _generic_control_service "hysteria" "start" ;;
     "st mtp" | "r mtp") _generic_control_service "mtg" "start" ;;
     "sp hy") _generic_control_service "hysteria" "stop" ;;
@@ -2358,7 +2358,7 @@ fi
 # 普通命令处理
 case "$ACTION" in
 # 简化后的交互式选择命令，只保留简短别名
-i) _interactive_service_selection "install" "安装或重装" ;;
+i | install) _interactive_service_selection "install" "安装或重装" ;;
 st | r) _interactive_service_selection "start" "启动" ;;
 sp) _interactive_service_selection "stop" "停止" ;;
 re) _interactive_service_selection "restart" "重启" ;;
