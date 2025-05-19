@@ -3,8 +3,8 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.7.7" # Incremented version
-SCRIPT_DATE="2025-05-18"
+SCRIPT_VERSION="1.7.8" # Incremented version
+SCRIPT_DATE="2025-05-19"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
 
@@ -1734,52 +1734,31 @@ _show_menu() {
     echo ""
     _log_info "${SCRIPT_COMMAND_NAME} 管理面板 (v$SCRIPT_VERSION - $SCRIPT_DATE)"
     echo "--------------------------------------------"
-    echo -e "${YELLOW}统一命令 (交互式选择服务):${NC}"
-    echo "  i            - 安装或重装服务 (选择 Hysteria 2 或 MTProto)"
-    echo "  st, r        - 启动服务"
-    echo "  sp           - 停止服务"
-    echo "  re           - 重启服务"
-    echo "  s            - 查看服务状态"
-    echo "  e            - 设置开机自启"
-    echo "  d            - 禁止开机自启"
-    echo "  n            - 显示订阅链接和二维码"
-    echo "  l            - 查看输出日志"
-    echo "  le           - 查看错误日志"
+    echo -e "${YELLOW}服务命令:${NC}"
+    echo "  命令格式: ${SCRIPT_COMMAND_NAME} <命令> [服务]"
+    echo "  如不指定服务, 将显示交互式选择菜单"
+    echo ""
+    echo "  i  [hy|mtp]   - 安装或重装服务"
+    echo "  st [hy|mtp]   - 启动服务"
+    echo "  sp [hy|mtp]   - 停止服务"
+    echo "  re [hy|mtp]   - 重启服务"
+    echo "  s  [hy|mtp]   - 查看服务状态"
+    echo "  e  [hy|mtp]   - 设置开机自启"
+    echo "  d  [hy|mtp]   - 禁止开机自启"
+    echo "  n  [hy|mtp]   - 显示订阅链接和二维码"
+    echo "  l  [hy|mtp]   - 查看输出日志"
+    echo "  le [hy|mtp]   - 查看错误日志"
 
-    echo -e "\n${YELLOW}Hysteria 2 专用命令:${NC}"
-    echo "  i hy         - 直接安装 Hysteria 2"
-    echo "  st hy, r hy  - 直接启动 Hysteria 2"
-    echo "  sp hy        - 直接停止 Hysteria 2"
-    echo "  re hy        - 直接重启 Hysteria 2"
-    echo "  s hy         - 直接查看 Hysteria 2 状态"
-    echo "  e hy         - 直接设置 Hysteria 2 开机自启"
-    echo "  d hy         - 直接禁止 Hysteria 2 开机自启"
-    echo "  n hy         - 直接显示 Hysteria 2 订阅链接"
-    echo "  l hy         - 直接查看 Hysteria 2 日志"
-    echo "  le hy        - 直接查看 Hysteria 2 错误日志"
-    echo "  add          - 添加/更换 Hysteria 配置"
-    echo "  del          - 删除当前 Hysteria 配置"
-    echo "  conf         - 显示 Hysteria 配置摘要"
-    echo "  ce           - 手动编辑 Hysteria 配置文件"
-    echo "  cc           - 交互修改 Hysteria 部分配置"
+    echo -e "\n${YELLOW}配置命令:${NC}"
+    echo "  ad           - 添加/更换服务配置 (选择 Hysteria 2 或 MTProto)"
+    echo "  de           - 删除服务配置"
+    echo "  co           - 显示服务配置摘要"
+    echo "  ce           - 手动编辑服务配置文件"
+    echo "  cc           - 交互修改服务配置 (Hysteria 2 特性)"
     _detect_os
-    if [[ "$INIT_SYSTEM" == "systemd" ]]; then echo "  ly           - 查看 Hysteria systemd 日志"; fi
-
-    echo -e "\n${YELLOW}MTProto 代理专用命令:${NC}"
-    echo "  i mtp        - 直接安装 MTProto 代理"
-    echo "  st mtp, r mtp - 直接启动 MTProto 代理"
-    echo "  sp mtp       - 直接停止 MTProto 代理"
-    echo "  re mtp       - 直接重启 MTProto 代理"
-    echo "  s mtp        - 直接查看 MTProto 代理状态"
-    echo "  e mtp        - 直接设置 MTProto 代理开机自启"
-    echo "  d mtp        - 直接禁止 MTProto 代理开机自启"
-    echo "  n mtp        - 直接显示 MTProto 代理链接"
-    echo "  l mtp        - 直接查看 MTProto 代理日志"
-    echo "  le mtp       - 直接查看 MTProto 代理错误日志"
-    echo "  add_mtp      - 添加/更换 MTProto 配置"
-    echo "  del_mtp      - 删除当前 MTProto 配置"
-    echo "  ce_mtp       - 手动编辑 MTProto 配置文件"
-    if [[ "$INIT_SYSTEM" == "systemd" ]]; then echo "  ly_mtp        - 查看 MTProto systemd 日志"; fi
+    if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+        echo "  ly [hy|mtp]   - 查看 systemd 日志"
+    fi
 
     echo -e "\n${YELLOW}通用命令:${NC}"
     echo "  u            - 卸载 Hysteria 2, MTProto 及此管理脚本"
@@ -1787,11 +1766,11 @@ _show_menu() {
     echo "  v            - 显示此脚本及已安装服务的版本"
     echo "  h            - 显示此帮助菜单"
     echo "--------------------------------------------"
-    echo "用法: sudo ${SCRIPT_COMMAND_NAME} <命令> [服务]"
-    echo "例如: sudo ${SCRIPT_COMMAND_NAME} i       (显示交互式菜单选择安装服务)"
-    echo "      sudo ${SCRIPT_COMMAND_NAME} i hy    (直接安装 Hysteria 2)"
-    echo "      sudo ${SCRIPT_COMMAND_NAME} i mtp   (直接安装 MTProto)"
-    echo "      sudo ${SCRIPT_COMMAND_NAME} re hy   (直接重启 Hysteria 2)"
+    echo "示例:"
+    echo "  sudo ${SCRIPT_COMMAND_NAME} i       (显示交互式菜单选择安装服务)"
+    echo "  sudo ${SCRIPT_COMMAND_NAME} i hy    (直接安装 Hysteria 2)"
+    echo "  sudo ${SCRIPT_COMMAND_NAME} i mtp   (直接安装 MTProto)"
+    echo "  sudo ${SCRIPT_COMMAND_NAME} re hy   (直接重启 Hysteria 2)"
     echo ""
 }
 _show_management_commands_hint() { _log_info "您可使用 'sudo ${SCRIPT_COMMAND_NAME} help' 或 'sudo ${SCRIPT_COMMAND_NAME} h' 查看管理命令面板。"; }
@@ -2157,6 +2136,75 @@ _interactive_service_selection() {
     esac
 }
 
+# --- Interactive Config Selection Function ---
+_interactive_config_selection() {
+    local action="$1"
+    local action_desc="$2"
+
+    echo ""
+    _log_info "请选择要${action_desc}的服务:"
+    echo "1. Hysteria 2"
+    echo "2. MTProto 代理 (mtg)"
+    echo ""
+    echo "0. 取消"
+
+    local selection
+    _read_from_tty selection "请选择 [0-2]: "
+
+    case "$selection" in
+    1)
+        _log_info "已选择 Hysteria 2"
+        case "$action" in
+        "add") _add_hysteria_config ;;
+        "delete") _delete_hysteria_config ;;
+        "config") _show_hysteria_config ;;
+        "edit")
+            _ensure_root
+            if ! _is_hysteria_installed; then
+                _log_error "Hysteria未安装."
+                return 1
+            fi
+            if [ -z "$EDITOR" ]; then EDITOR="vi"; fi
+            _log_info "使用 $EDITOR 打开 Hysteria 配置文件 $HYSTERIA_CONFIG_FILE ..."
+            if $EDITOR "$HYSTERIA_CONFIG_FILE"; then
+                _log_info "编辑完成。考虑重启服务: sudo $SCRIPT_COMMAND_NAME re hy"
+            else
+                _log_error "编辑器 '$EDITOR' 返回错误。"
+            fi
+            ;;
+        "change") _change_hysteria_config_interactive ;;
+        *) _log_error "未知操作: $action" ;;
+        esac
+        ;;
+    2)
+        _log_info "已选择 MTProto 代理 (mtg)"
+        case "$action" in
+        "add") _add_mtg_config ;;
+        "delete") _delete_mtg_config ;;
+        "config")
+            if ! _is_mtg_installed; then
+                _log_error "MTProto 未安装。无配置显示。"
+                return 1
+            fi
+            _log_info "当前MTProto配置文件($MTG_CONFIG_FILE):"
+            echo "----------------------------------------------------"
+            if [ -f "$MTG_CONFIG_FILE" ]; then cat "$MTG_CONFIG_FILE"; else _log_error "配置文件不存在。"; fi
+            echo "----------------------------------------------------"
+            ;;
+        "edit") _edit_mtg_config ;;
+        "change") _log_error "MTProto不支持交互式配置修改。请使用'edit'进行手动编辑。" ;;
+        *) _log_error "未知操作: $action" ;;
+        esac
+        ;;
+    0 | "")
+        _log_info "操作已取消"
+        ;;
+    *)
+        _log_error "无效选择: $selection"
+        ;;
+    esac
+}
+
 # --- Main Script Logic ---
 if [[ "$1" != "v" && "$1" != "h" && "$1" != "" && "$1" != "-h" ]]; then
     _detect_os
@@ -2288,50 +2336,79 @@ loge | logs_err) _interactive_service_selection "logs_err" "查看错误日志" 
 # 保留的特殊命令
 un | u) _do_uninstall_all ;;
 
-# Hysteria配置相关命令
-add) _add_hysteria_config ;;
-del) _delete_hysteria_config ;;
-conf | config) _show_hysteria_config ;;
-ce | config_edit)
-    _ensure_root
-    if ! _is_hysteria_installed; then
-        _log_error "Hysteria未安装."
-        exit 1
-    fi
-    if [ -z "$EDITOR" ]; then EDITOR="vi"; fi
-    _log_info "使用 $EDITOR 打开 Hysteria 配置文件 $HYSTERIA_CONFIG_FILE ..."
-    if $EDITOR "$HYSTERIA_CONFIG_FILE"; then _log_info "编辑完成。考虑重启服务: sudo $SCRIPT_COMMAND_NAME re"; else _log_error "编辑器 '$EDITOR' 返回错误。"; fi
-    ;;
-cc | config_change) _change_hysteria_config_interactive ;;
+# Hysteria配置相关命令 - 简化为两字母命令
+ad | add) _interactive_config_selection "add" "添加/更换配置" ;;
+de | del) _interactive_config_selection "delete" "删除配置" ;;
+co | conf | config) _interactive_config_selection "config" "显示配置" ;;
+ce | config_edit) _interactive_config_selection "edit" "编辑配置文件" ;;
+cc | config_change) _interactive_config_selection "change" "修改配置" ;;
 
-# MTProto配置相关命令
-add_mtp) _add_mtg_config ;;
-del_mtp) _delete_mtg_config ;;
-ce_mtp | config_mtp_edit) _edit_mtg_config ;;
+# 所有配置命令已整合到上方的交互式选择中
 
 # 系统级日志命令
 ly | logsy | logs_sys)
     _detect_os
-    if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+    if [[ "$INIT_SYSTEM" != "systemd" ]]; then
+        _log_error "此命令仅适用于 systemd 系统。"
+        exit 1
+    fi
+
+    # 如果有第二个参数，直接查看指定服务的日志
+    if [[ "$TARGET" == "hy" ]]; then
         if ! _is_hysteria_installed; then
             _log_error "Hysteria 未安装。"
             exit 1
         fi
         _log_info "按 CTRL+C 退出 (Hysteria systemd 日志)。"
         journalctl -u "$HYSTERIA_SERVICE_NAME_SYSTEMD" -f --no-pager
-    else _log_error "此命令仅适用于 systemd 系统上的 Hysteria 服务。"; fi
-    ;;
-ly_mtp | logsy_mtp | logs_sys_mtp)
-    _detect_os
-    if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+    elif [[ "$TARGET" == "mtp" ]]; then
         if ! _is_mtg_installed; then
             _log_error "MTProto (mtg) 未安装。"
             exit 1
         fi
         _log_info "按 CTRL+C 退出 (MTG systemd 日志)。"
         journalctl -u "$MTG_SERVICE_NAME_SYSTEMD" -f --no-pager
-    else _log_error "此命令仅适用于 systemd 系统上的 MTProto (mtg) 服务。"; fi
+    else
+        # 无第二个参数，显示交互式选择
+        echo ""
+        _log_info "请选择要查看 systemd 日志的服务:"
+        echo "1. Hysteria 2"
+        echo "2. MTProto 代理 (mtg)"
+        echo ""
+        echo "0. 取消"
+
+        local selection
+        _read_from_tty selection "请选择 [0-2]: "
+
+        case "$selection" in
+        1)
+            if ! _is_hysteria_installed; then
+                _log_error "Hysteria 未安装。"
+                exit 1
+            fi
+            _log_info "按 CTRL+C 退出 (Hysteria systemd 日志)。"
+            journalctl -u "$HYSTERIA_SERVICE_NAME_SYSTEMD" -f --no-pager
+            ;;
+        2)
+            if ! _is_mtg_installed; then
+                _log_error "MTProto (mtg) 未安装。"
+                exit 1
+            fi
+            _log_info "按 CTRL+C 退出 (MTG systemd 日志)。"
+            journalctl -u "$MTG_SERVICE_NAME_SYSTEMD" -f --no-pager
+            ;;
+        0 | "")
+            _log_info "操作已取消"
+            ;;
+        *)
+            _log_error "无效选择: $selection"
+            ;;
+        esac
+    fi
     ;;
+
+# 移除旧的MTProto系统日志命令，因为已经整合到ly命令中
+# ly_mtp | logsy_mtp | logs_sys_mtp) 命令已删除
 
 # 其他通用命令
 up) _do_update ;;
