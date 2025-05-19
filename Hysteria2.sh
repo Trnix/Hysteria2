@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.7.3" # Incremented version
+SCRIPT_VERSION="1.7.4" # Incremented version
 SCRIPT_DATE="2025-05-18"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
@@ -1730,6 +1730,32 @@ _do_update() {
     return 0
 }
 
+_show_add_menu() {
+    echo -e "\n${YELLOW}添加节点选项:${NC}"
+    echo "1) 添加 Hysteria 节点"
+    echo "2) 添加 MTProto 节点"
+    echo "0) 返回主菜单"
+    read -p "请选择 [0-2]: " choice
+    case $choice in
+        1) _add_hysteria_config ;;
+        2) _add_mtg_config ;;
+        *) return ;;
+    esac
+}
+
+_show_delete_menu() {
+    echo -e "\n${YELLOW}删除节点选项:${NC}"
+    echo "1) 删除 Hysteria 节点"
+    echo "2) 删除 MTProto 节点"
+    echo "0) 返回主菜单"
+    read -p "请选择 [0-2]: " choice
+    case $choice in
+        1) _delete_hysteria_config ;;
+        2) _delete_mtg_config ;;
+        *) return ;;
+    esac
+}
+
 _show_menu() {
     echo ""
     _log_info "${SCRIPT_COMMAND_NAME} 管理面板 (v$SCRIPT_VERSION - $SCRIPT_DATE)"
@@ -2319,11 +2345,13 @@ version | v)
     ;;
 help | h | --help | -h | "") _show_menu ;;
 i | install) _show_install_menu ;;
+add | a) _show_add_menu ;;
+del | d) _show_delete_menu ;;
 c | config) _show_config_menu ;;
 s | service) _show_service_menu ;;
 l | logs) _show_logs_menu ;;
 m | mtp) _show_mtp_menu ;;
-v | version) _show_version ;;
+v | version) echo "$SCRIPT_COMMAND_NAME 管理脚本 v$SCRIPT_VERSION ($SCRIPT_DATE)" ;;
 up | update) _do_update ;;
 *)
     _log_error "未知命令: $ACTION"
