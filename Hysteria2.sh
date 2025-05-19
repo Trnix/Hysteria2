@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.8" # Incremented version
+SCRIPT_VERSION="1.8.1" # Incremented version
 SCRIPT_DATE="2025-05-19"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
@@ -1989,12 +1989,11 @@ _delete_hysteria_config() {
     _log_info "停止 Hysteria 服务..."
     _generic_control_service "hysteria" "stop"
 
-    # 备份配置
-    local backup_dir="${HYSTERIA_CONFIG_DIR}_backup_$(date +%Y%m%d_%H%M%S)"
-    _log_info "备份当前配置到: $backup_dir"
-    mv "$HYSTERIA_CONFIG_DIR" "$backup_dir"
+    # 直接删除配置
+    _log_info "删除当前配置..."
+    rm -rf "$HYSTERIA_CONFIG_DIR"
 
-    _log_success "Hysteria 配置已删除并备份。"
+    _log_success "Hysteria 配置已删除。"
     _log_info "如需添加新配置，请使用: sudo $SCRIPT_COMMAND_NAME add"
 }
 
@@ -2056,12 +2055,11 @@ _delete_mtg_config() {
     _log_info "停止 MTProto 服务..."
     _generic_control_service "mtg" "stop"
 
-    # 备份配置
-    local backup_dir="${MTG_CONFIG_DIR}_backup_$(date +%Y%m%d_%H%M%S)"
-    _log_info "备份当前配置到: $backup_dir"
-    mv "$MTG_CONFIG_DIR" "$backup_dir"
+    # 直接删除配置
+    _log_info "删除当前配置..."
+    rm -rf "$MTG_CONFIG_DIR"
 
-    _log_success "MTProto 配置已删除并备份。"
+    _log_success "MTProto 配置已删除。"
     _log_info "如需添加新配置，请使用: sudo $SCRIPT_COMMAND_NAME add_mtp"
 }
 
