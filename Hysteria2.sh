@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.7.8" # Incremented version
+SCRIPT_VERSION="1.7.9" # Incremented version
 SCRIPT_DATE="2025-05-19"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
@@ -1901,6 +1901,14 @@ _add_hysteria_config() {
     _read_from_tty MASQUERADE_URL_INPUT "伪装URL(默认 $DEFAULT_MASQUERADE_URL): "
     MASQUERADE_URL=${MASQUERADE_URL_INPUT:-$DEFAULT_MASQUERADE_URL}
 
+    # 计算最终会使用的路径（应用配置后）
+    local cert_path_final=""
+    local key_path_final=""
+    if [[ "$TLS_TYPE" -eq 1 && -n "$CERT_PATH" ]]; then
+        cert_path_final="$HYSTERIA_CONFIG_DIR/certs/$(basename "$CERT_PATH")"
+        key_path_final="$HYSTERIA_CONFIG_DIR/certs/$(basename "$KEY_PATH")"
+    fi
+
     # 生成新配置文件
     cat >"$config_file_new" <<EOF
 # Hysteria 2 服务器配置文件
@@ -1924,8 +1932,8 @@ EOF
         cat >>"$config_file_new" <<EOF
 
 tls:
-  cert: $CERT_PATH
-  key: $KEY_PATH
+  cert: $cert_path_final
+  key: $key_path_final
 EOF
         _log_warning "Hysteria 自定义证书客户端需设insecure:true"
         ;;
@@ -1950,6 +1958,8 @@ EOF
     # 应用新配置
     mv "$config_dir_new" "$HYSTERIA_CONFIG_DIR"
     _log_success "新配置已应用。"
+
+    # 配置路径已在生成时设置为最终路径，无需再次修改
 
     # 重启服务
     _log_info "重启 Hysteria 服务以应用新配置..."
@@ -2190,6 +2200,9 @@ _interactive_config_selection() {
             echo "----------------------------------------------------"
             if [ -f "$MTG_CONFIG_FILE" ]; then cat "$MTG_CONFIG_FILE"; else _log_error "配置文件不存在。"; fi
             echo "----------------------------------------------------"
+
+            # 显示MTProto链接和二维码
+            _show_mtg_info_and_qrcode
             ;;
         "edit") _edit_mtg_config ;;
         "change") _log_error "MTProto不支持交互式配置修改。请使用'edit'进行手动编辑。" ;;
