@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.7.4" # Incremented version
+SCRIPT_VERSION="1.7.5" # Incremented version
 SCRIPT_DATE="2025-05-18"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
@@ -1730,169 +1730,56 @@ _do_update() {
     return 0
 }
 
-_show_add_menu() {
-    echo -e "\n${YELLOW}添加节点选项:${NC}"
-    echo "1) 添加 Hysteria 节点"
-    echo "2) 添加 MTProto 节点"
-    echo "0) 返回主菜单"
-    read -p "请选择 [0-2]: " choice
-    case $choice in
-        1) _add_hysteria_config ;;
-        2) _add_mtg_config ;;
-        *) return ;;
-    esac
-}
-
-_show_delete_menu() {
-    echo -e "\n${YELLOW}删除节点选项:${NC}"
-    echo "1) 删除 Hysteria 节点"
-    echo "2) 删除 MTProto 节点"
-    echo "0) 返回主菜单"
-    read -p "请选择 [0-2]: " choice
-    case $choice in
-        1) _delete_hysteria_config ;;
-        2) _delete_mtg_config ;;
-        *) return ;;
-    esac
-}
-
 _show_menu() {
     echo ""
     _log_info "${SCRIPT_COMMAND_NAME} 管理面板 (v$SCRIPT_VERSION - $SCRIPT_DATE)"
     echo "--------------------------------------------"
-    echo -e "${YELLOW}主菜单选项:${NC}"
-    echo "  i, install          - 进入安装/卸载菜单"
-    echo "  c, config           - 进入配置管理菜单"
-    echo "  s, service          - 进入服务管理菜单"
-    echo "  l, logs             - 进入日志查看菜单"
-    echo "  m, mtp              - 进入MTProto代理管理菜单"
-    echo "  v, version          - 显示版本信息"
-    echo "  up, update          - 更新管理脚本"
-    echo "  h, help             - 显示此帮助菜单"
+    echo -e "${YELLOW}Hysteria 2 管理:${NC}"
+    echo "  install (i)         - 安装或重装 Hysteria 2"
+    echo "  add                 - 添加/更换 Hysteria 配置"
+    echo "  del                 - 删除当前 Hysteria 配置"
+    echo "  start (run)         - 启动 Hysteria 服务"
+    echo "  stop (sp)           - 停止 Hysteria 服务"
+    echo "  restart (re, rs)    - 重启 Hysteria 服务"
+    echo "  status (st)         - 查看 Hysteria 服务状态"
+    echo "  enable (en)         - 设置 Hysteria 开机自启"
+    echo "  disable (dis)       - 禁止 Hysteria 开机自启"
+    echo "  info (nfo)          - 显示 Hysteria 订阅链接和二维码"
+    echo "  config (conf)       - 显示 Hysteria 配置摘要"
+    echo "  config_edit (ce)    - 手动编辑 Hysteria 配置文件"
+    echo "  config_change (cc)  - 交互修改 Hysteria 部分配置"
+    echo "  logs (log)          - 查看 Hysteria 输出日志"
+    echo "  logs_err (loge)     - 查看 Hysteria 错误日志"
+    _detect_os
+    if [[ "$INIT_SYSTEM" == "systemd" ]]; then echo "  logs_sys (logsy)    - 查看 Hysteria systemd 日志"; fi
+
+    echo -e "\n${YELLOW}MTProto 代理 (mtg) 管理:${NC}"
+    echo "  install_mtp (i_mtp) - 安装或重装 MTProto 代理"
+    echo "  add_mtp             - 添加/更换 MTProto 配置"
+    echo "  del_mtp             - 删除当前 MTProto 配置"
+    echo "  start_mtp (run_mtp) - 启动 MTProto 服务"
+    echo "  stop_mtp (sp_mtp)   - 停止 MTProto 服务"
+    echo "  restart_mtp (re_mtp)- 重启 MTProto 服务"
+    echo "  status_mtp (st_mtp) - 查看 MTProto 服务状态"
+    echo "  enable_mtp (en_mtp) - 设置 MTProto 开机自启"
+    echo "  disable_mtp (dis_mtp)- 禁止 MTProto 开机自启"
+    echo "  info_mtp (nfo_mtp)  - 显示 MTProto 链接和二维码"
+    echo "  config_mtp_edit (ce_mtp) - 手动编辑 MTProto 配置文件"
+    echo "  logs_mtp (log_mtp)  - 查看 MTProto 输出日志"
+    echo "  logs_err_mtp (loge_mtp) - 查看 MTProto 错误日志"
+    if [[ "$INIT_SYSTEM" == "systemd" ]]; then echo "  logs_sys_mtp (logsy_mtp) - 查看 MTProto systemd 日志"; fi
+
+    echo -e "\n${YELLOW}通用命令:${NC}"
+    echo "  uninstall (un, u) - 同时卸载 Hysteria 2, MTProto 及此管理脚本"
+    echo "  update (up)       - 更新 Hysteria, MTG 程序和此管理脚本"
+    echo "  version (v)       - 显示此脚本及已安装服务的版本"
+    echo "  help (h)          - 显示此帮助菜单"
     echo "--------------------------------------------"
-    echo "用法: sudo ${SCRIPT_COMMAND_NAME} <选项>"
+    echo "用法: sudo ${SCRIPT_COMMAND_NAME} <命令>"
     echo "例如: sudo ${SCRIPT_COMMAND_NAME} i"
-    echo "      sudo ${SCRIPT_COMMAND_NAME} c"
+    echo "      sudo ${SCRIPT_COMMAND_NAME} add"
+    echo "      sudo ${SCRIPT_COMMAND_NAME} up"
     echo ""
-}
-
-_show_install_menu() {
-    echo -e "\n${YELLOW}安装/卸载选项:${NC}"
-    echo "1) 安装/重装 Hysteria 2"
-    echo "2) 安装/重装 MTProto 代理"
-    echo "3) 卸载所有服务和脚本"
-    echo "0) 返回主菜单"
-    read -p "请选择 [0-3]: " choice
-    case $choice in
-        1) _install_hysteria ;;
-        2) _install_mtg ;;
-        3) _uninstall_all ;;
-        *) return ;;
-    esac
-}
-
-_show_config_menu() {
-    echo -e "\n${YELLOW}配置管理选项:${NC}"
-    echo "1) 添加/更换 Hysteria 配置"
-    echo "2) 删除当前 Hysteria 配置"
-    echo "3) 显示 Hysteria 配置摘要"
-    echo "4) 手动编辑 Hysteria 配置"
-    echo "5) 交互修改 Hysteria 配置"
-    echo "6) 显示 Hysteria 订阅链接和二维码"
-    echo "7) 添加/更换 MTProto 配置"
-    echo "8) 删除当前 MTProto 配置"
-    echo "9) 显示 MTProto 链接和二维码"
-    echo "0) 返回主菜单"
-    read -p "请选择 [0-9]: " choice
-    case $choice in
-        1) _add_hysteria_config ;;
-        2) _delete_hysteria_config ;;
-        3) _show_hysteria_config ;;
-        4) _edit_hysteria_config ;;
-        5) _change_hysteria_config ;;
-        6) _show_hysteria_info ;;
-        7) _add_mtg_config ;;
-        8) _delete_mtg_config ;;
-        9) _show_mtg_info ;;
-        *) return ;;
-    esac
-}
-
-_show_service_menu() {
-    echo -e "\n${YELLOW}服务管理选项:${NC}"
-    echo "1) 启动 Hysteria 服务"
-    echo "2) 停止 Hysteria 服务"
-    echo "3) 重启 Hysteria 服务"
-    echo "4) 查看 Hysteria 服务状态"
-    echo "5) 设置 Hysteria 开机自启"
-    echo "6) 禁止 Hysteria 开机自启"
-    echo "7) 启动 MTProto 服务"
-    echo "8) 停止 MTProto 服务"
-    echo "9) 重启 MTProto 服务"
-    echo "10) 查看 MTProto 服务状态"
-    echo "0) 返回主菜单"
-    read -p "请选择 [0-10]: " choice
-    case $choice in
-        1) _generic_control_service "hysteria" "start" ;;
-        2) _generic_control_service "hysteria" "stop" ;;
-        3) _generic_control_service "hysteria" "restart" ;;
-        4) _check_service_status "hysteria" ;;
-        5) _generic_control_service "hysteria" "enable" ;;
-        6) _generic_control_service "hysteria" "disable" ;;
-        7) _generic_control_service "mtg" "start" ;;
-        8) _generic_control_service "mtg" "stop" ;;
-        9) _generic_control_service "mtg" "restart" ;;
-        10) _check_service_status "mtg" ;;
-        *) return ;;
-    esac
-}
-
-_show_logs_menu() {
-    echo -e "\n${YELLOW}日志查看选项:${NC}"
-    echo "1) 查看 Hysteria 输出日志"
-    echo "2) 查看 Hysteria 错误日志"
-    echo "3) 查看 MTProto 输出日志"
-    echo "4) 查看 MTProto 错误日志"
-    if [[ "$INIT_SYSTEM" == "systemd" ]]; then
-        echo "5) 查看 Hysteria systemd 日志"
-        echo "6) 查看 MTProto systemd 日志"
-    fi
-    echo "0) 返回主菜单"
-    read -p "请选择 [0-6]: " choice
-    case $choice in
-        1) _show_hysteria_logs ;;
-        2) _show_hysteria_error_logs ;;
-        3) _show_mtg_logs ;;
-        4) _show_mtg_error_logs ;;
-        5) if [[ "$INIT_SYSTEM" == "systemd" ]]; then _show_hysteria_systemd_logs; fi ;;
-        6) if [[ "$INIT_SYSTEM" == "systemd" ]]; then _show_mtg_systemd_logs; fi ;;
-        *) return ;;
-    esac
-}
-
-_show_mtp_menu() {
-    echo -e "\n${YELLOW}MTProto代理管理选项:${NC}"
-    echo "1) 安装/重装 MTProto 代理"
-    echo "2) 添加/更换 MTProto 配置"
-    echo "3) 删除当前 MTProto 配置"
-    echo "4) 启动 MTProto 服务"
-    echo "5) 停止 MTProto 服务"
-    echo "6) 重启 MTProto 服务"
-    echo "7) 查看 MTProto 服务状态"
-    echo "8) 显示 MTProto 链接"
-    echo "0) 返回主菜单"
-    read -p "请选择 [0-8]: " choice
-    case $choice in
-        1) _install_mtg ;;
-        2) _add_mtg_config ;;
-        3) _delete_mtg_config ;;
-        4) _generic_control_service "mtg" "start" ;;
-        5) _generic_control_service "mtg" "stop" ;;
-        6) _generic_control_service "mtg" "restart" ;;
-        7) _check_service_status "mtg" ;;
-        8) _show_mtg_info ;;
-        *) return ;;
-    esac
 }
 _show_management_commands_hint() { _log_info "您可使用 'sudo ${SCRIPT_COMMAND_NAME} help' 或 'sudo ${SCRIPT_COMMAND_NAME} h' 查看管理命令面板。"; }
 
@@ -2344,15 +2231,10 @@ version | v)
     fi
     ;;
 help | h | --help | -h | "") _show_menu ;;
-i | install) _show_install_menu ;;
-add | a) _show_add_menu ;;
-del | d) _show_delete_menu ;;
-c | config) _show_config_menu ;;
-s | service) _show_service_menu ;;
-l | logs) _show_logs_menu ;;
-m | mtp) _show_mtp_menu ;;
-v | version) echo "$SCRIPT_COMMAND_NAME 管理脚本 v$SCRIPT_VERSION ($SCRIPT_DATE)" ;;
-up | update) _do_update ;;
+add) _add_hysteria_config ;;
+del) _delete_hysteria_config ;;
+add_mtp) _add_mtg_config ;;
+del_mtp) _delete_mtg_config ;;
 *)
     _log_error "未知命令: $ACTION"
     _show_menu
