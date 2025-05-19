@@ -1750,11 +1750,11 @@ _show_menu() {
     echo "  le [hy|mtp]   - 查看错误日志"
 
     echo -e "\n${YELLOW}配置命令:${NC}"
-    echo "  ad           - 添加/更换服务配置 (选择 Hysteria 2 或 MTProto)"
-    echo "  de           - 删除服务配置"
-    echo "  co           - 显示服务配置摘要"
-    echo "  ce           - 手动编辑服务配置文件"
-    echo "  cc           - 交互修改服务配置 (Hysteria 2 特性)"
+    echo "  ad [hy|mtp]   - 添加/更换服务配置"
+    echo "  de [hy|mtp]   - 删除服务配置"
+    echo "  co [hy|mtp]   - 显示服务配置摘要"
+    echo "  ce [hy|mtp]   - 手动编辑服务配置文件"
+    echo "  cc [hy|mtp]   - 交互修改服务配置 (Hysteria 2 特性)"
     _detect_os
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then
         echo "  ly [hy|mtp]   - 查看 systemd 日志"
