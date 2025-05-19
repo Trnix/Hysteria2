@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.7.9" # Incremented version
+SCRIPT_VERSION="1.8" # Incremented version
 SCRIPT_DATE="2025-05-19"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
@@ -2271,6 +2271,40 @@ if [[ -n "$TARGET" ]]; then
             journalctl -u "$MTG_SERVICE_NAME_SYSTEMD" -f --no-pager
         fi
         ;;
+    # 配置命令直接调用特定服务
+    "ad hy") _add_hysteria_config ;;
+    "ad mtp") _add_mtg_config ;;
+    "de hy") _delete_hysteria_config ;;
+    "de mtp") _delete_mtg_config ;;
+    "co hy") _show_hysteria_config ;;
+    "co mtp")
+        if ! _is_mtg_installed; then
+            _log_error "MTProto 未安装。无配置显示。"
+            exit 1
+        fi
+        _log_info "当前MTProto配置文件($MTG_CONFIG_FILE):"
+        echo "----------------------------------------------------"
+        if [ -f "$MTG_CONFIG_FILE" ]; then cat "$MTG_CONFIG_FILE"; else _log_error "配置文件不存在。"; fi
+        echo "----------------------------------------------------"
+        _show_mtg_info_and_qrcode
+        ;;
+    "ce hy")
+        _ensure_root
+        if ! _is_hysteria_installed; then
+            _log_error "Hysteria未安装."
+            exit 1
+        fi
+        if [ -z "$EDITOR" ]; then EDITOR="vi"; fi
+        _log_info "使用 $EDITOR 打开 Hysteria 配置文件 $HYSTERIA_CONFIG_FILE ..."
+        if $EDITOR "$HYSTERIA_CONFIG_FILE"; then
+            _log_info "编辑完成。考虑重启服务: sudo $SCRIPT_COMMAND_NAME re hy"
+        else
+            _log_error "编辑器 '$EDITOR' 返回错误。"
+        fi
+        ;;
+    "ce mtp") _edit_mtg_config ;;
+    "cc hy") _change_hysteria_config_interactive ;;
+    "cc mtp") _log_error "MTProto不支持交互式配置修改。请使用'hy ce mtp'进行手动编辑。" ;;
     # 为了兼容性保留原有命令
     "start hy" | "run hy") _generic_control_service "hysteria" "start" ;;
     "start mtp" | "run mtp") _generic_control_service "mtg" "start" ;;
