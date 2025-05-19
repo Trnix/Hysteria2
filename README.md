@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-这是一个轻量级多功能 Bash 脚本，旨在简化在 **Debian 系 (Ubuntu 等)、RHEL 系 (Rocky, AlmaLinux, CentOS/RHEL 8/9, Fedora 等) 及 Alpine Linux** 系统上自动安装、配置和管理 [Hysteria 2](https://github.com/apernet/hysteria) 服务的过程。脚本提供了一个便捷的 `hy` 命令行工具来执行各种管理任务。
+这是一个轻量级多功能 Bash 脚本，旨在简化在 **Debian 系 (Ubuntu 等)、RHEL 系 (Rocky, AlmaLinux, CentOS/RHEL 8/9, Fedora 等) 及 Alpine Linux** 系统上自动安装、配置和管理 [Hysteria 2](https://github.com/apernet/hysteria) 服务的过程。脚本提供了一个便捷的 `hy` 命令行工具来执行各种管理任务,添加了MTProto
 
 ---
 
