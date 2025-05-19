@@ -3,7 +3,7 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.7.1" # Incremented version
+SCRIPT_VERSION="1.7.2" # Incremented version
 SCRIPT_DATE="2025-05-18"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
@@ -2092,25 +2092,7 @@ config_edit | ce)
     if $EDITOR "$HYSTERIA_CONFIG_FILE"; then _log_info "编辑完成。考虑重启服务: sudo $SCRIPT_COMMAND_NAME restart (或 re/rs)"; else _log_error "编辑器 '$EDITOR' 返回错误。"; fi
     ;;
 config_change | cc) _change_hysteria_config_interactive ;;
-logs | log)
-    _detect_os
-    if ! _is_hysteria_installed; then
-        _log_error "Hysteria 未安装。"
-        exit 1
-    fi
-    if [[ "$INIT_SYSTEM" == "openrc" ]] && [ ! -f "$LOG_FILE_HYSTERIA_OUT" ]; then
-        _log_error "Hysteria 日志文件 $LOG_FILE_HYSTERIA_OUT 不存在。"
-        exit 1
-    elif [[ "$INIT_SYSTEM" == "systemd" ]] && [ ! -f "$LOG_FILE_HYSTERIA_OUT" ] && ! journalctl -u "$HYSTERIA_SERVICE_NAME_SYSTEMD" -n 1 --no-pager --quiet &>/dev/null; then
-        _log_info "Hysteria Systemd 日志似乎也为空或服务从未成功启动过。"
-        if [ ! -f "$LOG_FILE_HYSTERIA_OUT" ]; then
-            _log_error "Hysteria 日志文件 $LOG_FILE_HYSTERIA_OUT 也不存在。"
-            exit 1
-        fi
-    fi
-    _log_info "按 CTRL+C 退出 (Hysteria 日志 $LOG_FILE_HYSTERIA_OUT)。"
-    tail -f "$LOG_FILE_HYSTERIA_OUT"
-    ;;
+logs | log) _handle_logs_command ;;
 logs_err | loge)
     _detect_os
     if ! _is_hysteria_installed; then
