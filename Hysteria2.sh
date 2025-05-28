@@ -442,17 +442,26 @@ _check_service_status() {
             echo -e "${RED}✗ ${service_type^} 服务未运行${NC}"
             return 1
         fi
-    elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
-        service_cmd_val="$SERVICE_CMD_OPENRC"
-        local status_output
-        status_output=$($service_cmd_val "$current_service_name_val" status 2>/dev/null)
-        if echo "$status_output" | grep -q "started"; then
-            echo -e "${GREEN}✓ ${service_type^} 服务正在运行${NC}"
-            return 0
-        else
-            echo -e "${RED}✗ ${service_type^} 服务未运行${NC}"
-            return 1
-        fi
+       elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
+       service_cmd_val="$SERVICE_CMD_OPENRC"
+       local status_output
+       status_output=$($service_cmd_val "$current_service_name_val" status 2>/dev/null)
+       
+       # 检查进程是否存在
+       if echo "$status_output" | grep -q "started" || 
+          { [[ "$service_type" == "hysteria" ]] && pgrep -f "$HYSTERIA_INSTALL_PATH.*$HYSTERIA_CONFIG_FILE" >/dev/null; } || 
+          { [[ "$service_type" == "mtg" ]] && pgrep -f "$MTG_INSTALL_PATH.*$MTG_CONFIG_FILE" >/dev/null; }; then
+           echo -e "${GREEN}✓ ${service_type^} 服务正在运行${NC}"
+           return 0
+       else
+           # 显示详细状态
+           if echo "$status_output" | grep -q "crashed"; then
+               echo -e "${RED}✗ ${service_type^} 服务已崩溃${NC}"
+           else
+               echo -e "${RED}✗ ${service_type^} 服务未运行${NC}"
+           fi
+           return 1
+       fi
     else
         _log_error "不支持的初始化系统: $INIT_SYSTEM"
         return 1
