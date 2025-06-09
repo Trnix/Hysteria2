@@ -3,8 +3,8 @@
 # --- Script Setup ---
 SCRIPT_COMMAND_NAME="hy"
 SCRIPT_FILE_BASENAME="Hysteria2.sh"
-SCRIPT_VERSION="1.8.1" # Incremented version
-SCRIPT_DATE="2025-05-19"
+SCRIPT_VERSION="1.8.2" # 增加版本号
+SCRIPT_DATE="2025-06-10"
 
 HY_SCRIPT_URL_ON_GITHUB="https://raw.githubusercontent.com/LeoJyenn/Hysteria2/main/${SCRIPT_FILE_BASENAME}"
 
@@ -51,6 +51,7 @@ SETCAP_DEPENDENCY_PKG=""
 REQUIRED_PKGS_OS_SPECIFIC=""
 QRENCODE_PACKAGE_NAME=""
 MTG_LINK_VAR=""
+INSTALL_QRCODE="yes" # 添加新变量以控制是否安装二维码
 
 # --- Utility Functions ---
 _log_error() { echo -e "${RED}错误: $1${NC}" >&2; }
@@ -156,7 +157,10 @@ _install_dependencies() {
     _log_debug "检查并安装依赖包..."
     REQUIRED_PKGS_COMMON="wget curl git openssl lsof coreutils tar"
     REQUIRED_PKGS="$REQUIRED_PKGS_COMMON"
-    if [ -n "$QRENCODE_PACKAGE_NAME" ]; then REQUIRED_PKGS="$REQUIRED_PKGS $QRENCODE_PACKAGE_NAME"; fi
+    # 只有在用户选择安装二维码服务时才添加qrencode依赖
+    if [ "$INSTALL_QRCODE" = "yes" ] && [ -n "$QRENCODE_PACKAGE_NAME" ]; then 
+        REQUIRED_PKGS="$REQUIRED_PKGS $QRENCODE_PACKAGE_NAME"
+    fi
     if [ -n "$REQUIRED_PKGS_OS_SPECIFIC" ]; then REQUIRED_PKGS="$REQUIRED_PKGS $REQUIRED_PKGS_OS_SPECIFIC"; fi
 
     if ! command -v realpath &>/dev/null; then
@@ -697,10 +701,12 @@ _display_hysteria_link_and_qrcode() {
     _log_info "Hysteria 订阅链接 (备注: ${final_remark}):"
     echo -e "${GREEN}${hysteria_subscription_link}${NC}"
     echo ""
-    if command -v qrencode &>/dev/null; then
+    
+    # 只有在安装了二维码服务时才显示二维码
+    if [ "$INSTALL_QRCODE" = "yes" ] && command -v qrencode &>/dev/null; then
         _log_info "Hysteria 订阅链接二维码:"
         qrencode -t ANSIUTF8 "$hysteria_subscription_link"
-    else
+    elif [ "$INSTALL_QRCODE" = "yes" ]; then
         _log_warning "提示: 'qrencode' 未安装, 无法显示二维码。"
         local pkg_name="${QRENCODE_PACKAGE_NAME:-qrencode}"
         _log_info "(可运行 'sudo $PKG_INSTALL_CMD ${pkg_name}' 安装)"
@@ -730,10 +736,27 @@ _do_install_hysteria() {
         fi
         _log_warning "正强制安装 Hysteria..."
     fi
+    
+    # 在安装依赖前询问是否安装二维码服务
+    _log_info "是否安装二维码服务 (qrencode)?"
+    echo "1. 是 (可显示订阅链接二维码)"
+    echo "2. 否 (仅显示订阅链接文本)"
+    _read_from_tty QRCODE_OPTION "选择 [1-2, 默认 1]: "
+    QRCODE_OPTION=${QRCODE_OPTION:-1}
+    if [ "$QRCODE_OPTION" = "2" ]; then
+        INSTALL_QRCODE="no"
+        _log_info "已选择不安装二维码服务，将仅显示订阅链接文本。"
+    else
+        INSTALL_QRCODE="yes"
+        _log_info "已选择安装二维码服务。"
+    fi
+    
     _log_info "--- 开始 Hysteria 依赖安装 ---"
     _install_dependencies
     _log_info "--- Hysteria 依赖安装结束 ---"
-    DEFAULT_MASQUERADE_URL="https://www.bing.com"
+    
+    # 修改默认伪装URL为 https://www.cn.bing.com
+    DEFAULT_MASQUERADE_URL="https://www.cn.bing.com"
     DEFAULT_PORT="34567"
     DEFAULT_ACME_EMAIL="$(_generate_random_lowercase_string)@gmail.com"
     echo ""
@@ -756,8 +779,9 @@ _do_install_hysteria() {
                 _log_error "openssl未安装 ($PKG_INSTALL_CMD openssl)"
                 exit 1
             fi
-            _read_from_tty SELF_SIGN_SNI "自签名证书SNI(默认www.bing.com): "
-            SELF_SIGN_SNI=${SELF_SIGN_SNI:-"www.bing.com"}
+            # 修改默认SNI为 www.cn.bing.com
+            _read_from_tty SELF_SIGN_SNI "自签名证书SNI(默认www.cn.bing.com): "
+            SELF_SIGN_SNI=${SELF_SIGN_SNI:-"www.cn.bing.com"}
             SNI_VALUE="$SELF_SIGN_SNI"
             mkdir -p "$HYSTERIA_CERTS_DIR"
             CERT_PATH="$HYSTERIA_CERTS_DIR/server.crt"
@@ -1374,8 +1398,8 @@ _generate_mtg_config() {
     local mtg_port mtg_domain mtg_secret
     _read_from_tty mtg_port "请输入 MTProto 代理监听端口" "45678"
     mtg_port=${mtg_port:-45678}
-    _read_from_tty mtg_domain "请输入用于生成FakeTLS密钥的伪装域名 (建议常用可访问域名)" "cn.bing.com"
-    mtg_domain=${mtg_domain:-"cn.bing.com"}
+    _read_from_tty mtg_domain "请输入用于生成FakeTLS密钥的伪装域名 (建议常用可访问域名)" "www.cn.bing.com"
+    mtg_domain=${mtg_domain:-"www.cn.bing.com"}
     if ! command -v "$MTG_INSTALL_PATH" &>/dev/null; then
         _log_error "MTG 程序 ($MTG_INSTALL_PATH) 未找到或未安装。无法生成密钥。"
         return 1
@@ -1511,10 +1535,11 @@ _display_mtg_link_and_qrcode() {
         fi
     fi
     echo ""
-    if command -v qrencode &>/dev/null; then
+    # 只有在安装了二维码服务时才显示二维码
+    if [ "$INSTALL_QRCODE" = "yes" ] && command -v qrencode &>/dev/null; then
         _log_info "MTProto 代理 tg:// 链接二维码:"
         qrencode -t ANSIUTF8 "$MTG_LINK_VAR"
-    else
+    elif [ "$INSTALL_QRCODE" = "yes" ]; then
         _log_warning "提示: 'qrencode' 未安装 (${QRENCODE_PACKAGE_NAME:-qrencode}), 无法显示二维码。"
         _log_info "(可运行 'sudo $PKG_INSTALL_CMD ${QRENCODE_PACKAGE_NAME:-qrencode}' 安装)"
     fi
@@ -1543,6 +1568,23 @@ _do_install_mtp() {
         fi
         _log_warning "正强制安装 MTG..."
     else _log_info "准备首次安装 MTProto 代理 (mtg)..."; fi
+    
+    # 在MTG安装前也询问是否安装二维码服务
+    if [ -z "$INSTALL_QRCODE" ]; then  # 如果还未设置（可能之前安装Hysteria时已设置）
+        _log_info "是否安装二维码服务 (qrencode)?"
+        echo "1. 是 (可显示订阅链接二维码)"
+        echo "2. 否 (仅显示订阅链接文本)"
+        _read_from_tty QRCODE_OPTION "选择 [1-2, 默认 1]: "
+        QRCODE_OPTION=${QRCODE_OPTION:-1}
+        if [ "$QRCODE_OPTION" = "2" ]; then
+            INSTALL_QRCODE="no"
+            _log_info "已选择不安装二维码服务，将仅显示订阅链接文本。"
+        else
+            INSTALL_QRCODE="yes"
+            _log_info "已选择安装二维码服务。"
+        fi
+    fi
+    
     _log_info "--- 开始 MTProto (mtg) 依赖和程序安装 ---"
     _install_dependencies
     if ! _download_mtg_binary "$MTG_TARGET_VERSION" "true"; then
@@ -1801,7 +1843,7 @@ _add_hysteria_config() {
     mkdir -p "$config_dir_new"
     mkdir -p "$certs_dir_new"
 
-    DEFAULT_MASQUERADE_URL="https://www.bing.com"
+    DEFAULT_MASQUERADE_URL="https://www.cn.bing.com"
     DEFAULT_PORT="34567"
     DEFAULT_ACME_EMAIL="$(_generate_random_lowercase_string)@gmail.com"
 
@@ -1828,8 +1870,8 @@ _add_hysteria_config() {
                 _log_error "openssl未安装 ($PKG_INSTALL_CMD openssl)"
                 return 1
             fi
-            _read_from_tty SELF_SIGN_SNI "自签名证书SNI(默认www.bing.com): "
-            SELF_SIGN_SNI=${SELF_SIGN_SNI:-"www.bing.com"}
+            _read_from_tty SELF_SIGN_SNI "自签名证书SNI(默认www.cn.bing.com): "
+            SELF_SIGN_SNI=${SELF_SIGN_SNI:-"www.cn.bing.com"}
             SNI_VALUE="$SELF_SIGN_SNI"
             CERT_PATH="$certs_dir_new/server.crt"
             KEY_PATH="$certs_dir_new/server.key"
